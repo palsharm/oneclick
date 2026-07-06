@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Finlio — Money Tracker</title>
+
+  <!-- Tailwind (Play CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Segoe UI', 'Roboto', 'system-ui', 'sans-serif'],
+          },
+          colors: { ink: '#0f172a' },
+        },
+      },
+    };
+  </script>
+
+  <!-- React + ReactDOM + PropTypes + Recharts (UMD) + Babel -->
+  <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+  <style>
+    html, body, #root { height: 100%; }
+    body {
+      margin: 0;
+      background: #eef2f7;
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior-y: none;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .pt-safe { padding-top: env(safe-area-inset-top); }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .animate-sheet { animation: sheetUp .28s cubic-bezier(.22,1,.36,1); }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    .animate-fade { animation: fade .2s ease-out; }
+    input, select, button { font-family: inherit; }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!--
+    NOTE ON MODULARITY: this is a single deliverable file so it opens and runs
+    with zero build tooling. It is organised into clearly separated modules:
+      1. Constants & helpers      4. Feature components (Summary, Pie, List...)
+      2. usePersistentState hook  5. Navigation
+      3. UI atoms (Icon, Card)    6. Root <App/> that wires state together
+    Each section can be lifted into its own .jsx file verbatim under a bundler.
+  -->
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useMemo, useCallback } = React;
+    const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } = Recharts;
+
+    /* ============================================================
+       1. Constants & helpers
+       ============================================================ */
+    const STORAGE = { TX: 'finlio.transactions.v1', CATS: 'finlio.categories.v1', VIEW: 'finlio.lastView.v1' };
+
+    const DEFAULT_CATEGORIES = [
+      'Food', 'Travel', 'Vaanya', 'Studies', 'Shopping', 'Groceries',
+      'Bills', 'Insurance', 'Investment', 'Self', 'Miscellaneous',
+    ];
+
+    const TX_TYPES = [
+      { key: 'Expenditure', label: 'Expenditure', tone: 'rose' },
+      { key: 'Withdrawal',  label: 'Withdrawal',  tone: 'amber' },
+      { key: 'Deposit',     label: 'Deposit',     tone: 'emerald' },
+      { key: 'Savings',     label: 'Savings',     tone: 'sky' },
+    ];
+
+    const PALETTE = [
+      '#6366f1', '#ec4899', '#14b8a6', '#f59e0b', '#8b5cf6',
+      '#ef4444', '#22c55e', '#0ea5e9', '#f43f5e', '#84cc16',
+      '#a855f7', '#06b6d4', '#eab308', '#fb7185', '#4ade80',
+    ];
+
+    const MONTHS = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+
+    const monthKey = (year, month) => `${year}-${String(month + 1).padStart(2, '0')}`;
+
+    const currency = (n) =>
+      new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
+        .format(Number.isFinite(n) ? n : 0);
+
+    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+    const loadJSON = (key, fallback) => {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch (e) {
+        console.warn('Failed to read', key, e);
+        return fallback;
+      }
+    };
+
+    /* ============================================================
+       2. usePersistentState — localStorage-backed state
+       ============================================================ */
+    function usePersistentState(key, initial) {
+      const [value, setValue] = useState(() => loadJSON(key, initial));
+      useEffect(() => {
+        try { localStorage.setItem(key, JSON.stringify(value)); }
+        catch (e) { console.warn('Failed to persist', key, e); }
+      }, [key, value]);
+      return [value, setValue];
+    }
+
+    /* ============================================================
+       3. UI atoms
+       ============================================================ */
+    function Icon({ name, className = 'w-6 h-6' }) {
+      const paths = {
+        home:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 10.5 12 3l9 7.5M5 9.5V21h5v-6h4v6h5V9.5" />,
+        chart:   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 3v18h18M8 17V9m5 8V5m5 12v-6" />,
+        list:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />,
+        tag:     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M2.5 7.5v5.2a2 2 0 0 0 .6 1.4l7.8 7.8a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L11.5 5.7a2 2 0 0 0-1.4-.6H5A2.5 2.5 0 0 0 2.5 7.5Zm4 .5h.01" />,
+        plus:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5v14M5 12h14" />,
+        chevronL:<path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />,
+        chevronR:<path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />,
+        close:   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 6l12 12M18 6 6 18" />,
+        trash:   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />,
+        up:      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 19V5m0 0-6 6m6-6 6 6" />,
+        down:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 5v14m0 0 6-6m-6 6-6-6" />,
+        wallet:  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2v-3Zm0 3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7Zm13 3h.01" />,
+      };
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className={className} aria-hidden="true">
+          {paths[name]}
+        </svg>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-3xl shadow-sm ring-1 ring-black/5 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    /* ============================================================
+       4a. Month / Year selector
+       ============================================================ */
+    function MonthSelector({ year, month, onChange }) {
+      const shift = (delta) => {
+        let m = month + delta, y = year;
+        if (m < 0) { m = 11; y -= 1; }
+        if (m > 11) { m = 0; y += 1; }
+        onChange(y, m);
+      };
+      return (
+        <div className="flex items-center justify-between gap-2">
+          <button onClick={() => shift(-1)} aria-label="Previous month"
+            className="h-12 w-12 grid place-items-center rounded-2xl bg-white/15 text-white active:scale-95 transition">
+            <Icon name="chevronL" className="w-5 h-5" />
+          </button>
+          <div className="flex-1 flex items-center justify-center gap-2">
+            <select value={month} onChange={(e) => onChange(year, Number(e.target.value))}
+              className="bg-transparent text-white text-xl font-semibold text-center focus:outline-none appearance-none cursor-pointer">
+              {MONTHS.map((m, i) => <option key={m} value={i} className="text-ink">{m}</option>)}
+            </select>
+            <select value={year} onChange={(e) => onChange(Number(e.target.value), month)}
+              className="bg-transparent text-white text-xl font-semibold text-center focus:outline-none appearance-none cursor-pointer">
+              {Array.from({ length: 11 }, (_, i) => year - 5 + i).map((y) =>
+                <option key={y} value={y} className="text-ink">{y}</option>)}
+            </select>
+          </div>
+          <button onClick={() => shift(1)} aria-label="Next month"
+            className="h-12 w-12 grid place-items-center rounded-2xl bg-white/15 text-white active:scale-95 transition">
+            <Icon name="chevronR" className="w-5 h-5" />
+          </button>
+        </div>
+      );
+    }
+
+    /* ============================================================
+       4b. Summary card — Received vs Spent
+       ============================================================ */
+    function SummaryCard({ totals }) {
+      const { received, spent, savings, net } = totals;
+      return (
+        <Card className="p-5">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500 text-sm font-medium">Net balance this month</span>
+            <Icon name="wallet" className="w-5 h-5 text-slate-400" />
+          </div>
+          <div className={`mt-1 text-3xl font-bold ${net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {currency(net)}
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-emerald-50 p-3">
+              <div className="flex items-center gap-1.5 text-emerald-700">
+                <Icon name="down" className="w-4 h-4" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Received</span>
+              </div>
+              <div className="mt-1 text-lg font-bold text-emerald-700">{currency(received)}</div>
+            </div>
+            <div className="rounded-2xl bg-rose-50 p-3">
+              <div className="flex items-center gap-1.5 text-rose-700">
+                <Icon name="up" className="w-4 h-4" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Spent</span>
+              </div>
+              <div className="mt-1 text-lg font-bold text-rose-700">{currency(spent)}</div>
+            </div>
+          </div>
+          <div className="mt-3 rounded-2xl bg-sky-50 p-3 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-sky-700">Savings logged</span>
+            <span className="text-lg font-bold text-sky-700">{currency(savings)}</span>
+          </div>
+        </Card>
+      );
+    }
+
+    /* ============================================================
+       4c. Pie chart — expenditure by category
+       ============================================================ */
+    function CategoryPie({ data }) {
+      if (!data.length) {
+        return (
+          <Card className="p-8 text-center">
+            <div className="mx-auto w-14 h-14 rounded-full bg-slate-100 grid place-items-center">
+              <Icon name="chart" className="w-7 h-7 text-slate-400" />
+            </div>
+            <p className="mt-3 text-slate-500 font-medium">No expenditure yet</p>
+            <p className="text-sm text-slate-400">Add an expense to see the breakdown.</p>
+          </Card>
+        );
+      }
+      const total = data.reduce((s, d) => s + d.value, 0);
+      return (
+        <Card className="p-5">
+          <h3 className="font-semibold text-ink">Spending by category</h3>
+          <div className="h-64 mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                  innerRadius={55} outerRadius={95} paddingAngle={2} stroke="none">
+                  {data.map((entry, i) => <Cell key={entry.name} fill={PALETTE[i % PALETTE.length]} />)}
+                </Pie>
+                <Tooltip formatter={(value, name) => [currency(value), name]}
+                  contentStyle={{ borderRadius: 14, border: 'none', boxShadow: '0 6px 24px rgba(0,0,0,.12)' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-3 space-y-2">
+            {data.map((d, i) => (
+              <div key={d.name} className="flex items-center gap-3">
+                <span className="w-3 h-3 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
+                <span className="text-sm text-slate-700 flex-1 truncate">{d.name}</span>
+                <span className="text-sm font-medium text-slate-500">
+                  {total ? Math.round((d.value / total) * 100) : 0}%
+                </span>
+                <span className="text-sm font-semibold text-ink w-20 text-right">{currency(d.value)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      );
+    }
+
+    /* ============================================================
+       4d. Transaction list
+       ============================================================ */
+    function TransactionList({ items, onDelete }) {
+      if (!items.length) {
+        return (
+          <Card className="p-8 text-center">
+            <p className="text-slate-500 font-medium">No transactions</p>
+            <p className="text-sm text-slate-400">Tap the + button to log one.</p>
+          </Card>
+        );
+      }
+      const toneMap = {
+        Expenditure: 'text-rose-600 bg-rose-50',
+        Withdrawal: 'text-amber-600 bg-amber-50',
+        Deposit: 'text-emerald-600 bg-emerald-50',
+        Savings: 'text-sky-600 bg-sky-50',
+      };
+      const signFor = (t) => (t === 'Deposit' ? '+' : t === 'Savings' ? '' : '−');
+      return (
+        <div className="space-y-2">
+          {items.map((tx) => (
+            <Card key={tx.id} className="p-3.5 flex items-center gap-3">
+              <span className={`shrink-0 text-[10px] font-bold uppercase px-2 py-1 rounded-lg ${toneMap[tx.type]}`}>
+                {tx.type.slice(0, 4)}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-ink truncate">{tx.category}</div>
+                {tx.note ? <div className="text-xs text-slate-400 truncate">{tx.note}</div> : null}
+              </div>
+              <div className="text-right">
+                <div className="font-semibold text-ink">{signFor(tx.type)}{currency(tx.amount)}</div>
+                <div className="text-[11px] text-slate-400">{tx.date}</div>
+              </div>
+              <button onClick={() => onDelete(tx.id)} aria-label="Delete transaction"
+                className="shrink-0 h-11 w-11 grid place-items-center text-slate-300 hover:text-rose-500 active:scale-90 transition">
+                <Icon name="trash" className="w-5 h-5" />
+              </button>
+            </Card>
+          ))}
+        </div>
+      );
+    }
+
+    /* ============================================================
+       4e. Add-transaction sheet (bottom modal)
+       ============================================================ */
+    function AddSheet({ open, onClose, onSave, categories, defaultDate }) {
+      const [type, setType] = useState('Expenditure');
+      const [amount, setAmount] = useState('');
+      const [category, setCategory] = useState(categories[0] || '');
+      const [note, setNote] = useState('');
+      const [date, setDate] = useState(defaultDate);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        if (open) {
+          setType('Expenditure');
+          setAmount('');
+          setCategory(categories[0] || '');
+          setNote('');
+          setDate(defaultDate);
+          setError('');
+        }
+      }, [open, defaultDate, categories]);
+
+      if (!open) return null;
+
+      const submit = () => {
+        const value = parseFloat(amount);
+        if (!Number.isFinite(value) || value <= 0) { setError('Enter an amount greater than 0.'); return; }
+        if (!category) { setError('Pick a category.'); return; }
+        onSave({
+          id: uid(), type,
+          amount: Math.round(value * 100) / 100,
+          category, note: note.trim(), date,
+        });
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-end">
+          <div className="absolute inset-0 bg-black/40 animate-fade" onClick={onClose} />
+          <div className="relative w-full max-w-md mx-auto bg-white rounded-t-3xl p-5 pb-8 animate-sheet max-h-[92vh] overflow-y-auto no-scrollbar">
+            <div className="mx-auto h-1.5 w-10 rounded-full bg-slate-200 mb-4" />
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-ink">Add transaction</h2>
+              <button onClick={onClose} aria-label="Close" className="h-11 w-11 grid place-items-center text-slate-400">
+                <Icon name="close" className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {TX_TYPES.map((t) => {
+                const active = type === t.key;
+                const activeCls = {
+                  rose: 'bg-rose-500 text-white shadow',
+                  amber: 'bg-amber-500 text-white shadow',
+                  emerald: 'bg-emerald-500 text-white shadow',
+                  sky: 'bg-sky-500 text-white shadow',
+                }[t.tone];
+                return (
+                  <button key={t.key} onClick={() => setType(t.key)}
+                    className={`h-12 rounded-2xl text-sm font-semibold transition active:scale-95 ${
+                      active ? activeCls : 'bg-slate-100 text-slate-600'}`}>
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <label className="block mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Amount</label>
+            <div className="mt-1 flex items-center rounded-2xl bg-slate-100 px-4 h-14">
+              <span className="text-2xl font-semibold text-slate-400 mr-2">₹</span>
+              <input type="number" inputMode="decimal" value={amount}
+                onChange={(e) => setAmount(e.target.value)} placeholder="0" autoFocus
+                className="flex-1 bg-transparent text-2xl font-semibold text-ink focus:outline-none w-full" />
+            </div>
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none">
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Note (optional)</label>
+            <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Groceries at DMart"
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+
+            {error ? <p className="mt-3 text-sm text-rose-600 font-medium">{error}</p> : null}
+
+            <button onClick={submit}
+              className="mt-6 w-full h-14 rounded-2xl bg-ink text-white font-semibold text-base active:scale-[.98] transition">
+              Save transaction
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ============================================================
+       4f. Category manager
+       ============================================================ */
+    function CategoryManager({ categories, setCategories, transactions }) {
+      const [name, setName] = useState('');
+      const [error, setError] = useState('');
+
+      const usageCount = useMemo(() => {
+        const map = {};
+        transactions.forEach((t) => { map[t.category] = (map[t.category] || 0) + 1; });
+        return map;
+      }, [transactions]);
+
+      const add = () => {
+        const clean = name.trim();
+        if (!clean) { setError('Enter a category name.'); return; }
+        if (categories.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+          setError('That category already exists.'); return;
+        }
+        setCategories([...categories, clean]);
+        setName(''); setError('');
+      };
+
+      const remove = (cat) => setCategories(categories.filter((c) => c !== cat));
+
+      return (
+        <div className="space-y-4">
+          <Card className="p-5">
+            <h3 className="font-semibold text-ink">Add new category</h3>
+            <div className="mt-3 flex gap-2">
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="e.g. Health"
+                className="flex-1 h-12 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+              <button onClick={add}
+                className="h-12 px-5 rounded-2xl bg-ink text-white font-semibold active:scale-95 transition flex items-center gap-1">
+                <Icon name="plus" className="w-5 h-5" /> Add
+              </button>
+            </div>
+            {error ? <p className="mt-2 text-sm text-rose-600 font-medium">{error}</p> : null}
+          </Card>
+
+          <Card className="p-2">
+            {categories.map((c) => {
+              const count = usageCount[c] || 0;
+              return (
+                <div key={c} className="flex items-center gap-3 p-3">
+                  <span className="h-10 w-10 grid place-items-center rounded-xl bg-indigo-50 text-indigo-500">
+                    <Icon name="tag" className="w-5 h-5" />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-ink truncate">{c}</div>
+                    <div className="text-xs text-slate-400">{count} transaction{count === 1 ? '' : 's'}</div>
+                  </div>
+                  <button onClick={() => remove(c)} aria-label={`Delete ${c}`}
+                    className="h-11 w-11 grid place-items-center text-slate-300 hover:text-rose-500 active:scale-90 transition">
+                    <Icon name="trash" className="w-5 h-5" />
+                  </button>
+                </div>
+              );
+            })}
+          </Card>
+          <p className="text-center text-xs text-slate-400 px-8">
+            Deleting a category won't remove past transactions logged under it.
+          </p>
+        </div>
+      );
+    }
+
+    /* ============================================================
+       5. Bottom navigation
+       ============================================================ */
+    function BottomNav({ tab, setTab, onAdd }) {
+      const item = (key, icon, label) => {
+        const active = tab === key;
+        return (
+          <button onClick={() => setTab(key)}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 min-w-[48px] ${
+              active ? 'text-indigo-600' : 'text-slate-400'}`}>
+            <Icon name={icon} className="w-6 h-6" />
+            <span className="text-[10px] font-medium">{label}</span>
+          </button>
+        );
+      };
+      return (
+        <nav className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-black/5 pb-safe">
+          <div className="max-w-md mx-auto h-16 flex items-center relative">
+            {item('home', 'home', 'Home')}
+            {item('analytics', 'chart', 'Analytics')}
+            <div className="w-16 shrink-0" aria-hidden="true" />
+            {item('history', 'list', 'History')}
+            {item('categories', 'tag', 'Categories')}
+            <button onClick={onAdd} aria-label="Add transaction"
+              className="absolute left-1/2 -translate-x-1/2 -top-6 h-16 w-16 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 grid place-items-center active:scale-90 transition">
+              <Icon name="plus" className="w-8 h-8" />
+            </button>
+          </div>
+        </nav>
+      );
+    }
+
+    /* ============================================================
+       6. Root App — wires everything together
+       ============================================================ */
+    function App() {
+      const now = new Date();
+      const [transactions, setTransactions] = usePersistentState(STORAGE.TX, []);
+      const [categories, setCategories] = usePersistentState(STORAGE.CATS, DEFAULT_CATEGORIES);
+
+      const [lastView, setLastView] = usePersistentState(STORAGE.VIEW, {
+        year: now.getFullYear(),
+        month: now.getMonth(),
+      });
+      const [year, setYear] = useState(lastView.year);
+      const [month, setMonth] = useState(lastView.month);
+
+      useEffect(() => {
+        setLastView({ year, month });
+      }, [year, month]);
+      const [tab, setTab] = useState('home');
+      const [sheetOpen, setSheetOpen] = useState(false);
+
+      const activeKey = monthKey(year, month);
+
+      const monthTx = useMemo(
+        () => transactions
+          .filter((t) => (t.date || '').slice(0, 7) === activeKey)
+          .sort((a, b) => (a.date < b.date ? 1 : -1)),
+        [transactions, activeKey]
+      );
+
+      const totals = useMemo(() => {
+        let received = 0, spent = 0, savings = 0;
+        monthTx.forEach((t) => {
+          if (t.type === 'Deposit') received += t.amount;
+          else if (t.type === 'Expenditure' || t.type === 'Withdrawal') spent += t.amount;
+          else if (t.type === 'Savings') savings += t.amount;
+        });
+        return { received, spent, savings, net: received - spent };
+      }, [monthTx]);
+
+      const pieData = useMemo(() => {
+        const map = {};
+        monthTx.forEach((t) => {
+          if (t.type === 'Expenditure') map[t.category] = (map[t.category] || 0) + t.amount;
+        });
+        return Object.entries(map)
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value);
+      }, [monthTx]);
+
+      const addTransaction = useCallback((tx) => setTransactions((prev) => [tx, ...prev]), [setTransactions]);
+      const deleteTransaction = useCallback((id) => setTransactions((prev) => prev.filter((t) => t.id !== id)), [setTransactions]);
+
+      const defaultDate = useMemo(() => {
+        const isCurrent = year === now.getFullYear() && month === now.getMonth();
+        return isCurrent ? now.toISOString().slice(0, 10) : `${activeKey}-01`;
+      }, [year, month, activeKey]);
+
+      const titles = { home: 'Overview', analytics: 'Analytics', history: 'History', categories: 'Categories' };
+
+      return (
+        <div className="min-h-full max-w-md mx-auto flex flex-col">
+          <header className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-b-[2rem] pt-safe">
+            <div className="px-5 pt-6 pb-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-white/70 text-sm">Finlio</p>
+                  <h1 className="text-2xl font-bold">{titles[tab]}</h1>
+                </div>
+                <span className="h-11 w-11 rounded-full bg-white/15 grid place-items-center font-bold">
+                  {now.getDate().toString().padStart(2, '0')}
+                </span>
+              </div>
+              <div className="mt-5">
+                <MonthSelector year={year} month={month}
+                  onChange={(y, m) => { setYear(y); setMonth(m); }} />
+              </div>
+            </div>
+          </header>
+
+          <main className="flex-1 px-4 py-5 pb-28 space-y-4 no-scrollbar">
+            {tab === 'home' && (
+              <>
+                <SummaryCard totals={totals} />
+                <CategoryPie data={pieData} />
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="font-semibold text-ink">Recent</h2>
+                  {monthTx.length > 3 && (
+                    <button onClick={() => setTab('history')} className="text-sm font-medium text-indigo-600">See all</button>
+                  )}
+                </div>
+                <TransactionList items={monthTx.slice(0, 3)} onDelete={deleteTransaction} />
+              </>
+            )}
+
+            {tab === 'analytics' && (
+              <>
+                <SummaryCard totals={totals} />
+                <CategoryPie data={pieData} />
+              </>
+            )}
+
+            {tab === 'history' && (
+              <>
+                <div className="px-1 text-sm text-slate-500">
+                  {monthTx.length} transaction{monthTx.length === 1 ? '' : 's'} in {MONTHS[month]} {year}
+                </div>
+                <TransactionList items={monthTx} onDelete={deleteTransaction} />
+              </>
+            )}
+
+            {tab === 'categories' && (
+              <CategoryManager categories={categories} setCategories={setCategories} transactions={transactions} />
+            )}
+          </main>
+
+          <BottomNav tab={tab} setTab={setTab} onAdd={() => setSheetOpen(true)} />
+
+          <AddSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onSave={addTransaction}
+            categories={categories} defaultDate={defaultDate} />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
