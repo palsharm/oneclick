@@ -563,6 +563,16 @@
         return { received, spent, savings, net: received - spent };
       }, [monthTx]);
 
+      // Lifetime balance across all months: deposits - expenditure - withdrawals.
+      const lifetimeBalance = useMemo(() => {
+        let balance = 0;
+        transactions.forEach((t) => {
+          if (t.type === 'Deposit') balance += t.amount;
+          else if (t.type === 'Expenditure' || t.type === 'Withdrawal') balance -= t.amount;
+        });
+        return balance;
+      }, [transactions]);
+
       const pieData = useMemo(() => {
         const map = {};
         monthTx.forEach((t) => {
@@ -596,7 +606,15 @@
                   {now.getDate().toString().padStart(2, '0')}
                 </span>
               </div>
-              <div className="mt-5">
+
+              <div className="mt-4 rounded-2xl bg-white/10 px-4 py-3">
+                <p className="text-white/70 text-xs font-semibold uppercase tracking-wide">Total balance till now</p>
+                <p className={`text-2xl font-bold ${lifetimeBalance < 0 ? 'text-rose-200' : 'text-white'}`}>
+                  {currency(lifetimeBalance)}
+                </p>
+              </div>
+
+              <div className="mt-4">
                 <MonthSelector year={year} month={month}
                   onChange={(y, m) => { setYear(y); setMonth(m); }} />
               </div>
