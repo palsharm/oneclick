@@ -1,8 +1,8 @@
 {
-  "name": "Pallavi Sharma Finance",
-  "short_name": "PS Finance",
-  "description": "Mobile-first financial analysis app for tracking monthly transactions and investments.",
-  "start_url": "./index.html",
+  "name": "Pallavi Apps",
+  "short_name": "PS Apps",
+  "description": "Finance tracker and meal planner in one app.",
+  "start_url": "./app.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
