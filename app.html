@@ -1691,18 +1691,29 @@
        ROOT APP COMPONENT
        ============================================================ */
     function RootApp() {
-      const [currentApp, setCurrentApp] = useState(null);
+      const [currentApp, setCurrentApp] = useState(() => {
+        // Don't persist app selection - always start with landing page
+        return null;
+      });
+
+      const handleSelectApp = (app) => {
+        setCurrentApp(app);
+      };
+
+      const handleBack = () => {
+        setCurrentApp(null);
+      };
 
       if (currentApp === null) {
-        return <LandingPage onSelectApp={setCurrentApp} />;
+        return <LandingPage onSelectApp={handleSelectApp} />;
       }
 
       if (currentApp === 'finance') {
-        return <FinanceApp onBack={() => setCurrentApp(null)} />;
+        return <FinanceApp onBack={handleBack} />;
       }
 
       if (currentApp === 'mealplanner') {
-        return <MealPlannerApp onBack={() => setCurrentApp(null)} />;
+        return <MealPlannerApp onBack={handleBack} />;
       }
     }
 
