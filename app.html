@@ -1,0 +1,1722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <title>Pallavi Apps — Finance & Meal Planner</title>
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- iOS home-screen / standalone-app behavior -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="PS Apps" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png" />
+
+  <!-- Tailwind (Play CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Segoe UI', 'Roboto', 'system-ui', 'sans-serif'],
+          },
+          colors: { ink: '#0f172a' },
+        },
+      },
+    };
+  </script>
+
+  <!-- React + ReactDOM + PropTypes + Recharts (UMD) + Babel -->
+  <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+  <style>
+    html, body, #root { height: 100%; }
+    body {
+      margin: 0;
+      background: #eef2f7;
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior-y: none;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .pt-safe { padding-top: env(safe-area-inset-top); }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .animate-sheet { animation: sheetUp .28s cubic-bezier(.22,1,.36,1); }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    .animate-fade { animation: fade .2s ease-out; }
+    input, select, button { font-family: inherit; }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useMemo, useCallback, useRef } = React;
+    const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } = Recharts;
+
+    /* ============================================================
+       COMBINED APP: Landing Page + Finance + Meal Planner
+       ============================================================ */
+
+    /* ============================================================
+       LANDING PAGE COMPONENT
+       ============================================================ */
+    function LandingPage({ onSelectApp }) {
+      return (
+        <div className="min-h-full max-w-md mx-auto flex flex-col items-center justify-center px-4 bg-gradient-to-b from-indigo-50 to-purple-50">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold text-ink mb-2">Pallavi Apps</h1>
+            <p className="text-slate-600 mb-12 text-lg">Choose an app to get started</p>
+
+            <div className="space-y-4 w-full">
+              <button
+                onClick={() => onSelectApp('finance')}
+                className="w-full h-48 rounded-3xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30 hover:shadow-2xl hover:shadow-indigo-600/40 active:scale-95 transition flex flex-col items-center justify-center gap-4"
+              >
+                <span className="text-7xl">💰</span>
+                <span className="text-2xl font-bold">Finance</span>
+                <span className="text-sm text-indigo-100">Money Tracker</span>
+              </button>
+
+              <button
+                onClick={() => onSelectApp('mealplanner')}
+                className="w-full h-48 rounded-3xl bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-600/30 hover:shadow-2xl hover:shadow-purple-600/40 active:scale-95 transition flex flex-col items-center justify-center gap-4"
+              >
+                <span className="text-7xl">🍽️</span>
+                <span className="text-2xl font-bold">Meal Planner</span>
+                <span className="text-sm text-purple-100">Daily Nutrition</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ============================================================
+       FINANCE APP COMPONENTS & LOGIC
+       ============================================================ */
+    const FINANCE_STORAGE = {
+      TX: 'finlio.transactions.v1',
+      CATS: 'finlio.categories.v1',
+      VIEW: 'finlio.lastView.v1',
+      INVESTMENTS: 'finlio.investments.v1',
+      INVESTMENT_CATS: 'finlio.investmentCategories.v1',
+    };
+
+    const DEFAULT_CATEGORIES = [
+      'Food', 'Travel', 'Vaanya', 'Studies', 'Shopping', 'Groceries',
+      'Bills', 'Insurance', 'Investment', 'Self', 'Miscellaneous',
+    ];
+
+    const DEFAULT_INVESTMENT_CATEGORIES = [
+      'RSU', 'ESPP', 'NSE', 'FD', 'Gold', 'Gold Bond', 'LIC', 'Insurance', 'Assets',
+    ];
+
+    const TX_TYPES = [
+      { key: 'Expenditure', label: 'Expenditure', tone: 'rose' },
+      { key: 'Withdrawal',  label: 'Withdrawal',  tone: 'amber' },
+      { key: 'Deposit',     label: 'Deposit',     tone: 'emerald' },
+      { key: 'Savings',     label: 'Savings',     tone: 'sky' },
+    ];
+
+    const INVEST_TYPES = [
+      { key: 'Invest', label: 'Invest', tone: 'indigo' },
+      { key: 'Sell',   label: 'Sell',   tone: 'rose' },
+    ];
+
+    const PALETTE = [
+      '#6366f1', '#ec4899', '#14b8a6', '#f59e0b', '#8b5cf6',
+      '#ef4444', '#22c55e', '#0ea5e9', '#f43f5e', '#84cc16',
+      '#a855f7', '#06b6d4', '#eab308', '#fb7185', '#4ade80',
+    ];
+
+    const MONTHS = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+
+    const monthKey = (year, month) => `${year}-${String(month + 1).padStart(2, '0')}`;
+
+    const currency = (n) =>
+      new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
+        .format(Number.isFinite(n) ? n : 0);
+
+    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+    const loadJSON = (key, fallback) => {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch (e) {
+        console.warn('Failed to read', key, e);
+        return fallback;
+      }
+    };
+
+    function downloadInvestmentPDF(investments, breakdown, total) {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const marginX = 40;
+      const pageHeight = doc.internal.pageSize.getHeight();
+      let y = 50;
+
+      doc.setFontSize(18).setFont(undefined, 'bold');
+      doc.text('Pallavi Sharma Finance — Investment Report', marginX, y);
+      y += 20;
+      doc.setFontSize(10).setFont(undefined, 'normal').setTextColor(100);
+      doc.text(`Generated ${new Date().toLocaleString('en-IN')}`, marginX, y);
+      y += 30;
+
+      doc.setTextColor(0).setFontSize(13).setFont(undefined, 'bold');
+      doc.text(`Total invested: ${currency(total)}`, marginX, y);
+      y += 25;
+
+      doc.setFontSize(12);
+      doc.text('Breakdown by category', marginX, y);
+      y += 18;
+      doc.setFontSize(10).setFont(undefined, 'normal');
+      breakdown.forEach((row) => {
+        const pct = total ? Math.round((row.value / total) * 100) : 0;
+        doc.text(row.name, marginX, y);
+        doc.text(`${pct}%`, marginX + 260, y);
+        doc.text(currency(row.value), marginX + 320, y, { align: 'left' });
+        y += 16;
+        if (y > pageHeight - 60) { doc.addPage(); y = 50; }
+      });
+
+      y += 20;
+      if (y > pageHeight - 100) { doc.addPage(); y = 50; }
+      doc.setFontSize(12).setFont(undefined, 'bold');
+      doc.text('All entries', marginX, y);
+      y += 18;
+      doc.setFontSize(9).setFont(undefined, 'normal');
+      [...investments]
+        .sort((a, b) => (a.date < b.date ? 1 : -1))
+        .forEach((inv) => {
+          const isSell = inv.type === 'Sell';
+          const line = `${inv.date}   ${inv.category}   ${isSell ? 'Sold' : 'Invested'}   ${isSell ? '-' : '+'}${currency(inv.amount)}${inv.note ? '   — ' + inv.note : ''}`;
+          doc.text(line, marginX, y);
+          y += 14;
+          if (y > pageHeight - 60) { doc.addPage(); y = 50; }
+        });
+
+      doc.save(`pallavi-sharma-finance-investments-${new Date().toISOString().slice(0, 10)}.pdf`);
+    }
+
+    function usePersistentState(key, initial) {
+      const [value, setValue] = useState(() => loadJSON(key, initial));
+      useEffect(() => {
+        try { localStorage.setItem(key, JSON.stringify(value)); }
+        catch (e) { console.warn('Failed to persist', key, e); }
+      }, [key, value]);
+      return [value, setValue];
+    }
+
+    function Icon({ name, className = 'w-6 h-6' }) {
+      const paths = {
+        home:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 10.5 12 3l9 7.5M5 9.5V21h5v-6h4v6h5V9.5" />,
+        chart:   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 3v18h18M8 17V9m5 8V5m5 12v-6" />,
+        list:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />,
+        tag:     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M2.5 7.5v5.2a2 2 0 0 0 .6 1.4l7.8 7.8a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L11.5 5.7a2 2 0 0 0-1.4-.6H5A2.5 2.5 0 0 0 2.5 7.5Zm4 .5h.01" />,
+        plus:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5v14M5 12h14" />,
+        chevronL:<path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />,
+        chevronR:<path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />,
+        close:   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 6l12 12M18 6 6 18" />,
+        trash:   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />,
+        up:      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 19V5m0 0-6 6m6-6 6 6" />,
+        down:    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 5v14m0 0 6-6m-6 6-6-6" />,
+        wallet:  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2v-3Zm0 3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7Zm13 3h.01" />,
+        trend:   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 17 9 11l4 4 8-8m0 0h-5m5 0v5" />,
+        download:<path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />,
+      };
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className={className} aria-hidden="true">
+          {paths[name]}
+        </svg>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-3xl shadow-sm ring-1 ring-black/5 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function MonthSelector({ year, month, onChange }) {
+      const shift = (delta) => {
+        let m = month + delta, y = year;
+        if (m < 0) { m = 11; y -= 1; }
+        if (m > 11) { m = 0; y += 1; }
+        onChange(y, m);
+      };
+      return (
+        <div className="flex items-center justify-between gap-2">
+          <button onClick={() => shift(-1)} aria-label="Previous month"
+            className="h-12 w-12 grid place-items-center rounded-2xl bg-white/15 text-white active:scale-95 transition">
+            <Icon name="chevronL" className="w-5 h-5" />
+          </button>
+          <div className="flex-1 flex items-center justify-center gap-2">
+            <select value={month} onChange={(e) => onChange(year, Number(e.target.value))}
+              className="bg-transparent text-white text-xl font-semibold text-center focus:outline-none appearance-none cursor-pointer">
+              {MONTHS.map((m, i) => <option key={m} value={i} className="text-ink">{m}</option>)}
+            </select>
+            <select value={year} onChange={(e) => onChange(Number(e.target.value), month)}
+              className="bg-transparent text-white text-xl font-semibold text-center focus:outline-none appearance-none cursor-pointer">
+              {Array.from({ length: 11 }, (_, i) => year - 5 + i).map((y) =>
+                <option key={y} value={y} className="text-ink">{y}</option>)}
+            </select>
+          </div>
+          <button onClick={() => shift(1)} aria-label="Next month"
+            className="h-12 w-12 grid place-items-center rounded-2xl bg-white/15 text-white active:scale-95 transition">
+            <Icon name="chevronR" className="w-5 h-5" />
+          </button>
+        </div>
+      );
+    }
+
+    function SummaryCard({ totals }) {
+      const { received, spent, savings, net } = totals;
+      return (
+        <Card className="p-5">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500 text-sm font-medium">Net balance this month</span>
+            <Icon name="wallet" className="w-5 h-5 text-slate-400" />
+          </div>
+          <div className={`mt-1 text-3xl font-bold ${net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {currency(net)}
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-emerald-50 p-3">
+              <div className="flex items-center gap-1.5 text-emerald-700">
+                <Icon name="down" className="w-4 h-4" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Received</span>
+              </div>
+              <div className="mt-1 text-lg font-bold text-emerald-700">{currency(received)}</div>
+            </div>
+            <div className="rounded-2xl bg-rose-50 p-3">
+              <div className="flex items-center gap-1.5 text-rose-700">
+                <Icon name="up" className="w-4 h-4" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Spent</span>
+              </div>
+              <div className="mt-1 text-lg font-bold text-rose-700">{currency(spent)}</div>
+            </div>
+          </div>
+          <div className="mt-3 rounded-2xl bg-sky-50 p-3 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-sky-700">Savings logged</span>
+            <span className="text-lg font-bold text-sky-700">{currency(savings)}</span>
+          </div>
+        </Card>
+      );
+    }
+
+    function CategoryPie({ data, title = 'Spending by category', emptyTitle = 'No expenditure yet', emptySubtitle = 'Add an expense to see the breakdown.' }) {
+      if (!data.length) {
+        return (
+          <Card className="p-8 text-center">
+            <div className="mx-auto w-14 h-14 rounded-full bg-slate-100 grid place-items-center">
+              <Icon name="chart" className="w-7 h-7 text-slate-400" />
+            </div>
+            <p className="mt-3 text-slate-500 font-medium">{emptyTitle}</p>
+            <p className="text-sm text-slate-400">{emptySubtitle}</p>
+          </Card>
+        );
+      }
+      const total = data.reduce((s, d) => s + d.value, 0);
+      return (
+        <Card className="p-5">
+          <h3 className="font-semibold text-ink">{title}</h3>
+          <div className="h-64 mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                  innerRadius={55} outerRadius={95} paddingAngle={2} stroke="none" isAnimationActive={false}>
+                  {data.map((entry, i) => <Cell key={entry.name} fill={PALETTE[i % PALETTE.length]} />)}
+                </Pie>
+                <Tooltip formatter={(value, name) => [currency(value), name]}
+                  contentStyle={{ borderRadius: 14, border: 'none', boxShadow: '0 6px 24px rgba(0,0,0,.12)' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-3 space-y-2">
+            {data.map((d, i) => (
+              <div key={d.name} className="flex items-center gap-3">
+                <span className="w-3 h-3 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
+                <span className="text-sm text-slate-700 flex-1 truncate">{d.name}</span>
+                <span className="text-sm font-medium text-slate-500">
+                  {total ? Math.round((d.value / total) * 100) : 0}%
+                </span>
+                <span className="text-sm font-semibold text-ink w-20 text-right">{currency(d.value)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      );
+    }
+
+    function TransactionList({ items, onDelete }) {
+      if (!items.length) {
+        return (
+          <Card className="p-8 text-center">
+            <p className="text-slate-500 font-medium">No transactions</p>
+            <p className="text-sm text-slate-400">Tap the + button to log one.</p>
+          </Card>
+        );
+      }
+      const toneMap = {
+        Expenditure: 'text-rose-600 bg-rose-50',
+        Withdrawal: 'text-amber-600 bg-amber-50',
+        Deposit: 'text-emerald-600 bg-emerald-50',
+        Savings: 'text-sky-600 bg-sky-50',
+      };
+      const signFor = (t) => (t === 'Deposit' ? '+' : t === 'Savings' ? '' : '−');
+      return (
+        <div className="space-y-2">
+          {items.map((tx) => (
+            <Card key={tx.id} className="p-3.5 flex items-center gap-3">
+              <span className={`shrink-0 text-[10px] font-bold uppercase px-2 py-1 rounded-lg ${toneMap[tx.type]}`}>
+                {tx.type.slice(0, 4)}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-ink truncate">{tx.category}</div>
+                {tx.note ? <div className="text-xs text-slate-400 truncate">{tx.note}</div> : null}
+              </div>
+              <div className="text-right">
+                <div className="font-semibold text-ink">{signFor(tx.type)}{currency(tx.amount)}</div>
+                <div className="text-[11px] text-slate-400">{tx.date}</div>
+              </div>
+              <button onClick={() => onDelete(tx.id)} aria-label="Delete transaction"
+                className="shrink-0 h-11 w-11 grid place-items-center text-slate-300 hover:text-rose-500 active:scale-90 transition">
+                <Icon name="trash" className="w-5 h-5" />
+              </button>
+            </Card>
+          ))}
+        </div>
+      );
+    }
+
+    function AddSheet({ open, onClose, onSave, categories, defaultDate }) {
+      const [type, setType] = useState('Expenditure');
+      const [amount, setAmount] = useState('');
+      const [category, setCategory] = useState(categories[0] || '');
+      const [note, setNote] = useState('');
+      const [date, setDate] = useState(defaultDate);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        if (open) {
+          setType('Expenditure');
+          setAmount('');
+          setCategory(categories[0] || '');
+          setNote('');
+          setDate(defaultDate);
+          setError('');
+        }
+      }, [open, defaultDate, categories]);
+
+      if (!open) return null;
+
+      const submit = () => {
+        const value = parseFloat(amount);
+        if (!Number.isFinite(value) || value <= 0) { setError('Enter an amount greater than 0.'); return; }
+        if (!category) { setError('Pick a category.'); return; }
+        onSave({
+          id: uid(), type,
+          amount: Math.round(value * 100) / 100,
+          category, note: note.trim(), date,
+        });
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-end">
+          <div className="absolute inset-0 bg-black/40 animate-fade" onClick={onClose} />
+          <div className="relative w-full max-w-md mx-auto bg-white rounded-t-3xl p-5 pb-8 animate-sheet max-h-[92vh] overflow-y-auto no-scrollbar">
+            <div className="mx-auto h-1.5 w-10 rounded-full bg-slate-200 mb-4" />
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-ink">Add transaction</h2>
+              <button onClick={onClose} aria-label="Close" className="h-11 w-11 grid place-items-center text-slate-400">
+                <Icon name="close" className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {TX_TYPES.map((t) => {
+                const active = type === t.key;
+                const activeCls = {
+                  rose: 'bg-rose-500 text-white shadow',
+                  amber: 'bg-amber-500 text-white shadow',
+                  emerald: 'bg-emerald-500 text-white shadow',
+                  sky: 'bg-sky-500 text-white shadow',
+                }[t.tone];
+                return (
+                  <button key={t.key} onClick={() => setType(t.key)}
+                    className={`h-12 rounded-2xl text-sm font-semibold transition active:scale-95 ${
+                      active ? activeCls : 'bg-slate-100 text-slate-600'}`}>
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <label className="block mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Amount</label>
+            <div className="mt-1 flex items-center rounded-2xl bg-slate-100 px-4 h-14">
+              <span className="text-2xl font-semibold text-slate-400 mr-2">₹</span>
+              <input type="number" inputMode="decimal" value={amount}
+                onChange={(e) => setAmount(e.target.value)} placeholder="0" autoFocus
+                className="flex-1 bg-transparent text-2xl font-semibold text-ink focus:outline-none w-full" />
+            </div>
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none">
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Note (optional)</label>
+            <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Groceries at DMart"
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+
+            {error ? <p className="mt-3 text-sm text-rose-600 font-medium">{error}</p> : null}
+
+            <button onClick={submit}
+              className="mt-6 w-full h-14 rounded-2xl bg-ink text-white font-semibold text-base active:scale-[.98] transition">
+              Save transaction
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function AddInvestmentSheet({ open, onClose, onSave, categories }) {
+      const [type, setType] = useState('Invest');
+      const [amount, setAmount] = useState('');
+      const [category, setCategory] = useState(categories[0] || '');
+      const [note, setNote] = useState('');
+      const [date, setDate] = useState('');
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        if (open) {
+          setType('Invest');
+          setAmount('');
+          setCategory(categories[0] || '');
+          setNote('');
+          setDate(new Date().toISOString().slice(0, 10));
+          setError('');
+        }
+      }, [open, categories]);
+
+      if (!open) return null;
+
+      const submit = () => {
+        const value = parseFloat(amount);
+        if (!Number.isFinite(value) || value <= 0) { setError('Enter an amount greater than 0.'); return; }
+        if (!category) { setError('Pick a category.'); return; }
+        onSave({
+          id: uid(), type,
+          amount: Math.round(value * 100) / 100,
+          category, note: note.trim(), date,
+        });
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-end">
+          <div className="absolute inset-0 bg-black/40 animate-fade" onClick={onClose} />
+          <div className="relative w-full max-w-md mx-auto bg-white rounded-t-3xl p-5 pb-8 animate-sheet max-h-[92vh] overflow-y-auto no-scrollbar">
+            <div className="mx-auto h-1.5 w-10 rounded-full bg-slate-200 mb-4" />
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-ink">Add investment</h2>
+              <button onClick={onClose} aria-label="Close" className="h-11 w-11 grid place-items-center text-slate-400">
+                <Icon name="close" className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {INVEST_TYPES.map((t) => {
+                const active = type === t.key;
+                const activeCls = {
+                  indigo: 'bg-indigo-600 text-white shadow',
+                  rose: 'bg-rose-500 text-white shadow',
+                }[t.tone];
+                return (
+                  <button key={t.key} onClick={() => setType(t.key)}
+                    className={`h-12 rounded-2xl text-sm font-semibold transition active:scale-95 ${
+                      active ? activeCls : 'bg-slate-100 text-slate-600'}`}>
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <label className="block mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Amount</label>
+            <div className="mt-1 flex items-center rounded-2xl bg-slate-100 px-4 h-14">
+              <span className="text-2xl font-semibold text-slate-400 mr-2">₹</span>
+              <input type="number" inputMode="decimal" value={amount}
+                onChange={(e) => setAmount(e.target.value)} placeholder="0" autoFocus
+                className="flex-1 bg-transparent text-2xl font-semibold text-ink focus:outline-none w-full" />
+            </div>
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none">
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+
+            <label className="block mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Note (optional)</label>
+            <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Q2 RSU vest"
+              className="mt-1 w-full h-14 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+
+            {error ? <p className="mt-3 text-sm text-rose-600 font-medium">{error}</p> : null}
+
+            <button onClick={submit}
+              className="mt-6 w-full h-14 rounded-2xl bg-ink text-white font-semibold text-base active:scale-[.98] transition">
+              Save investment
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function InvestmentList({ items, onDelete }) {
+      if (!items.length) {
+        return (
+          <Card className="p-8 text-center">
+            <p className="text-slate-500 font-medium">No investments logged</p>
+            <p className="text-sm text-slate-400">Tap the + button to log one.</p>
+          </Card>
+        );
+      }
+      return (
+        <div className="space-y-2">
+          {items.map((inv) => {
+            const isSell = inv.type === 'Sell';
+            return (
+              <Card key={inv.id} className="p-3.5 flex items-center gap-3">
+                <span className={`shrink-0 h-10 w-10 grid place-items-center rounded-xl ${
+                  isSell ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>
+                  <Icon name="trend" className="w-5 h-5" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-ink truncate">{inv.category}</div>
+                  <div className="text-xs text-slate-400 truncate">
+                    {isSell ? 'Sold' : 'Invested'}{inv.note ? ` · ${inv.note}` : ''}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className={`font-semibold ${isSell ? 'text-rose-600' : 'text-ink'}`}>
+                    {isSell ? '−' : '+'}{currency(inv.amount)}
+                  </div>
+                  <div className="text-[11px] text-slate-400">{inv.date}</div>
+                </div>
+                <button onClick={() => onDelete(inv.id)} aria-label="Delete investment"
+                  className="shrink-0 h-11 w-11 grid place-items-center text-slate-300 hover:text-rose-500 active:scale-90 transition">
+                  <Icon name="trash" className="w-5 h-5" />
+                </button>
+              </Card>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function CategoryManager({ categories, setCategories, transactions, itemLabel = 'transaction' }) {
+      const [name, setName] = useState('');
+      const [error, setError] = useState('');
+
+      const usageCount = useMemo(() => {
+        const map = {};
+        transactions.forEach((t) => { map[t.category] = (map[t.category] || 0) + 1; });
+        return map;
+      }, [transactions]);
+
+      const add = () => {
+        const clean = name.trim();
+        if (!clean) { setError('Enter a category name.'); return; }
+        if (categories.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+          setError('That category already exists.'); return;
+        }
+        setCategories([...categories, clean]);
+        setName(''); setError('');
+      };
+
+      const remove = (cat) => setCategories(categories.filter((c) => c !== cat));
+
+      return (
+        <div className="space-y-4">
+          <Card className="p-5">
+            <h3 className="font-semibold text-ink">Add new category</h3>
+            <div className="mt-3 flex gap-2">
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="e.g. Health"
+                className="flex-1 h-12 rounded-2xl bg-slate-100 px-4 text-ink font-medium focus:outline-none" />
+              <button onClick={add}
+                className="h-12 px-5 rounded-2xl bg-ink text-white font-semibold active:scale-95 transition flex items-center gap-1">
+                <Icon name="plus" className="w-5 h-5" /> Add
+              </button>
+            </div>
+            {error ? <p className="mt-2 text-sm text-rose-600 font-medium">{error}</p> : null}
+          </Card>
+
+          <Card className="p-2">
+            {categories.map((c) => {
+              const count = usageCount[c] || 0;
+              return (
+                <div key={c} className="flex items-center gap-3 p-3">
+                  <span className="h-10 w-10 grid place-items-center rounded-xl bg-indigo-50 text-indigo-500">
+                    <Icon name="tag" className="w-5 h-5" />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-ink truncate">{c}</div>
+                    <div className="text-xs text-slate-400">{count} {itemLabel}{count === 1 ? '' : 's'}</div>
+                  </div>
+                  <button onClick={() => remove(c)} aria-label={`Delete ${c}`}
+                    className="h-11 w-11 grid place-items-center text-slate-300 hover:text-rose-500 active:scale-90 transition">
+                    <Icon name="trash" className="w-5 h-5" />
+                  </button>
+                </div>
+              );
+            })}
+          </Card>
+          <p className="text-center text-xs text-slate-400 px-8">
+            Deleting a category won't remove past {itemLabel}s logged under it.
+          </p>
+        </div>
+      );
+    }
+
+    function BottomNav({ tab, setTab, onAdd }) {
+      const item = (key, icon, label) => {
+        const active = tab === key;
+        return (
+          <button onClick={() => setTab(key)}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 min-w-[48px] ${
+              active ? 'text-indigo-600' : 'text-slate-400'}`}>
+            <Icon name={icon} className="w-6 h-6" />
+            <span className="text-[10px] font-medium">{label}</span>
+          </button>
+        );
+      };
+      return (
+        <nav className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-black/5 pb-safe">
+          <div className="max-w-md mx-auto h-16 flex items-center relative">
+            {item('home', 'home', 'Home')}
+            {item('history', 'list', 'History')}
+            <div className="w-16 shrink-0" aria-hidden="true" />
+            {item('categories', 'tag', 'Categories')}
+            {item('investments', 'trend', 'Invest')}
+            <button onClick={onAdd} aria-label={tab === 'investments' ? 'Add investment' : 'Add transaction'}
+              className="absolute left-1/2 -translate-x-1/2 -top-6 h-16 w-16 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 grid place-items-center active:scale-90 transition">
+              <Icon name="plus" className="w-8 h-8" />
+            </button>
+          </div>
+        </nav>
+      );
+    }
+
+    function FinanceApp({ onBack }) {
+      const now = new Date();
+      const [transactions, setTransactions] = usePersistentState(FINANCE_STORAGE.TX, []);
+      const [categories, setCategories] = usePersistentState(FINANCE_STORAGE.CATS, DEFAULT_CATEGORIES);
+      const [investments, setInvestments] = usePersistentState(FINANCE_STORAGE.INVESTMENTS, []);
+      const [investmentCategories, setInvestmentCategories] = usePersistentState(
+        FINANCE_STORAGE.INVESTMENT_CATS, DEFAULT_INVESTMENT_CATEGORIES
+      );
+
+      const [lastView, setLastView] = usePersistentState(FINANCE_STORAGE.VIEW, {
+        year: now.getFullYear(),
+        month: now.getMonth(),
+      });
+      const [year, setYear] = useState(lastView.year);
+      const [month, setMonth] = useState(lastView.month);
+
+      useEffect(() => {
+        setLastView({ year, month });
+      }, [year, month]);
+      const [tab, setTab] = useState('home');
+      const [sheetOpen, setSheetOpen] = useState(false);
+      const [investSheetOpen, setInvestSheetOpen] = useState(false);
+
+      const activeKey = monthKey(year, month);
+
+      const monthTx = useMemo(
+        () => transactions
+          .filter((t) => (t.date || '').slice(0, 7) === activeKey)
+          .sort((a, b) => (a.date < b.date ? 1 : -1)),
+        [transactions, activeKey]
+      );
+
+      const totals = useMemo(() => {
+        let received = 0, spent = 0, savings = 0;
+        monthTx.forEach((t) => {
+          if (t.type === 'Deposit') received += t.amount;
+          else if (t.type === 'Expenditure' || t.type === 'Withdrawal') spent += t.amount;
+          else if (t.type === 'Savings') savings += t.amount;
+        });
+        return { received, spent, savings, net: received - spent };
+      }, [monthTx]);
+
+      const lifetimeBalance = useMemo(() => {
+        let balance = 0;
+        transactions.forEach((t) => {
+          if (t.type === 'Deposit') balance += t.amount;
+          else if (t.type === 'Expenditure' || t.type === 'Withdrawal') balance -= t.amount;
+        });
+        return balance;
+      }, [transactions]);
+
+      const pieData = useMemo(() => {
+        const map = {};
+        monthTx.forEach((t) => {
+          if (t.type === 'Expenditure') map[t.category] = (map[t.category] || 0) + t.amount;
+        });
+        return Object.entries(map)
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value);
+      }, [monthTx]);
+
+      const addTransaction = useCallback((tx) => setTransactions((prev) => [tx, ...prev]), [setTransactions]);
+      const deleteTransaction = useCallback((id) => setTransactions((prev) => prev.filter((t) => t.id !== id)), [setTransactions]);
+
+      const investmentBreakdown = useMemo(() => {
+        const map = {};
+        investments.forEach((inv) => {
+          const signed = inv.type === 'Sell' ? -inv.amount : inv.amount;
+          map[inv.category] = (map[inv.category] || 0) + signed;
+        });
+        return Object.entries(map)
+          .filter(([, value]) => value > 0)
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value);
+      }, [investments]);
+
+      const totalInvested = useMemo(
+        () => investments.reduce((sum, inv) => sum + (inv.type === 'Sell' ? -inv.amount : inv.amount), 0),
+        [investments]
+      );
+
+      const addInvestment = useCallback((inv) => setInvestments((prev) => [inv, ...prev]), [setInvestments]);
+      const deleteInvestment = useCallback((id) => setInvestments((prev) => prev.filter((i) => i.id !== id)), [setInvestments]);
+
+      const defaultDate = useMemo(() => {
+        const isCurrent = year === now.getFullYear() && month === now.getMonth();
+        return isCurrent ? now.toISOString().slice(0, 10) : `${activeKey}-01`;
+      }, [year, month, activeKey]);
+
+      const titles = {
+        home: 'Overview', history: 'History',
+        categories: 'Categories', investments: 'Investments',
+      };
+
+      return (
+        <div className="min-h-full max-w-md mx-auto flex flex-col">
+          <header className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-b-[2rem] pt-safe">
+            <div className="px-5 pt-6 pb-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <button onClick={onBack} className="text-white/70 hover:text-white transition text-sm font-medium mb-2 flex items-center gap-1">
+                    ← Back
+                  </button>
+                  <h1 className="text-2xl font-bold">{titles[tab]}</h1>
+                </div>
+                <span className="h-11 w-11 rounded-full bg-white/15 grid place-items-center font-bold">
+                  {now.getDate().toString().padStart(2, '0')}
+                </span>
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-white/10 px-4 py-3">
+                <p className="text-white/70 text-xs font-semibold uppercase tracking-wide">Total balance till now</p>
+                <p className={`text-2xl font-bold ${lifetimeBalance < 0 ? 'text-rose-200' : 'text-white'}`}>
+                  {currency(lifetimeBalance)}
+                </p>
+              </div>
+
+              <div className="mt-4">
+                <MonthSelector year={year} month={month}
+                  onChange={(y, m) => { setYear(y); setMonth(m); }} />
+              </div>
+            </div>
+          </header>
+
+          <main className="flex-1 px-4 py-5 pb-28 space-y-4 no-scrollbar">
+            {tab === 'home' && (
+              <>
+                <SummaryCard totals={totals} />
+                <CategoryPie data={pieData} />
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="font-semibold text-ink">Recent</h2>
+                  {monthTx.length > 3 && (
+                    <button onClick={() => setTab('history')} className="text-sm font-medium text-indigo-600">See all</button>
+                  )}
+                </div>
+                <TransactionList items={monthTx.slice(0, 3)} onDelete={deleteTransaction} />
+              </>
+            )}
+
+            {tab === 'history' && (
+              <>
+                <div className="px-1 text-sm text-slate-500">
+                  {monthTx.length} transaction{monthTx.length === 1 ? '' : 's'} in {MONTHS[month]} {year}
+                </div>
+                <TransactionList items={monthTx} onDelete={deleteTransaction} />
+              </>
+            )}
+
+            {tab === 'categories' && (
+              <CategoryManager categories={categories} setCategories={setCategories} transactions={transactions} />
+            )}
+
+            {tab === 'investments' && (
+              <>
+                <Card className="p-5">
+                  <p className="text-slate-500 text-sm font-medium">Total invested</p>
+                  <p className="mt-1 text-3xl font-bold text-ink">{currency(totalInvested)}</p>
+                </Card>
+
+                <CategoryPie
+                  data={investmentBreakdown}
+                  title="Investments by category"
+                  emptyTitle="No investments yet"
+                  emptySubtitle="Add an investment to see the breakdown."
+                />
+
+                <button
+                  onClick={() => downloadInvestmentPDF(investments, investmentBreakdown, totalInvested)}
+                  disabled={!investments.length}
+                  className="w-full h-14 rounded-2xl bg-ink text-white font-semibold flex items-center justify-center gap-2 active:scale-[.98] transition disabled:opacity-40"
+                >
+                  <Icon name="download" className="w-5 h-5" /> Download PDF report
+                </button>
+
+                <CategoryManager
+                  categories={investmentCategories}
+                  setCategories={setInvestmentCategories}
+                  transactions={investments}
+                  itemLabel="investment"
+                />
+
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="font-semibold text-ink">All investments</h2>
+                </div>
+                <InvestmentList items={investments} onDelete={deleteInvestment} />
+              </>
+            )}
+          </main>
+
+          <BottomNav tab={tab} setTab={setTab}
+            onAdd={() => (tab === 'investments' ? setInvestSheetOpen(true) : setSheetOpen(true))} />
+
+          <AddSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onSave={addTransaction}
+            categories={categories} defaultDate={defaultDate} />
+
+          <AddInvestmentSheet open={investSheetOpen} onClose={() => setInvestSheetOpen(false)}
+            onSave={addInvestment} categories={investmentCategories} />
+        </div>
+      );
+    }
+
+    /* ============================================================
+       MEAL PLANNER APP COMPONENTS & LOGIC
+       ============================================================ */
+    const MEAL_STORAGE = {
+      MEALS: 'mealplanner.meals.v1',
+      ITEMS: 'mealplanner.items.v1',
+      GROCERY: 'mealplanner.grocery.v1',
+    };
+
+    const MEAL_TIMES = [
+      { id: 'vaana_tiffin', label: 'Vaana Tiffin' },
+      { id: 'vaana_breakfast', label: 'Vaana Breakfast' },
+      { id: 'vaana_fruit', label: 'Vaana Fruit' },
+      { id: 'breakfast', label: 'Breakfast' },
+      { id: 'mid_snack', label: 'Mid Snack' },
+      { id: 'lunch', label: 'Lunch' },
+      { id: 'drink', label: 'Drink' },
+      { id: 'snack', label: 'Snack' },
+      { id: 'dinner', label: 'Dinner' },
+      { id: 'milk', label: 'Milk' },
+    ];
+
+    const NUTRIENT_TYPES = ['protein', 'carbs', 'veggies', 'fruits', 'fats', 'dairy'];
+
+    const DEFAULT_ITEMS = {
+      water: { label: 'Water', items: ['kesar', 'saunf', 'ajwain', 'jeera', 'methi', 'badam', 'anjer', 'manakka', 'akhrot', 'gond', 'chia', 'sabja', 'flex', 'pumpkin', 'sunflower', 'lehsun', 'ghee'], isCommon: true },
+      vaana_breakfast: { label: 'Vaana Breakfast', items: ['pancakes', 'eggs', 'badam', 'makhana', 'channa', 'shakarkandi'], isCommon: false },
+      vaana_fruit: { label: 'Vaana Fruit', items: ['apple', 'papaya', 'pear', 'pome', 'jaamun', 'banana', 'watermelon', 'melon', 'mango', 'cherry'], isCommon: false },
+      vaana_tiffin: {
+        label: 'Vaana Tiffin',
+        isCommon: false,
+        subcategories: {
+          green_vegetable: { label: 'Green Vegetable', items: ['bhindi roti', 'paneer roti', 'moong chilla', 'oats chilla'] },
+          rice: { label: 'Rice', items: ['fried rice', 'kadhi chawal', 'dal chawal', 'rajma chawal', 'sabutdana'] },
+          paranthas: { label: 'Paranthas', items: ['alloo', 'paneer', 'missi', 'moong dal', 'sooji', 'besan', 'omlette', 'vermicilli', 'soya wrap', 'paneer wrap', 'mushroom wrap', 'rajma taco', 'sattu pratha', 'egg wrap', 'thecha'] },
+          fried: { label: 'Fried', items: ['allo poori', 'kackri allo', 'dal kackri', 'chole bhature', 'bread pakora', 'bread roll', 'sunny side up', 'poha'] },
+          fermented: { label: 'Fermented', items: ['idli sambhar', 'veg idli', 'dosa', 'uttapam', 'vada', 'paddu'] },
+          junks: { label: 'Junks', items: ['sandwich', 'burger', 'fries', 'KFC', 'malai toast', 'pizza', 'pasta', 'toasties'] },
+          fav: { label: 'Favorites', items: ['chaap', 'paneer tikka', 'tikki', 'mini pizza', 'kabab', 'pao bhajji', 'upma', 'macroni'] }
+        }
+      },
+      breakfast: { label: 'Breakfast', items: ['thecha', 'besan veggie cheela', 'soya+besan cheela', 'poha', 'vermicilli', 'macroni', 'upma', 'rajma wrap', 'egg wrap', 'fermented food with chutney', 'moong daal chilla', 'sprouts roti', 'omlette', 'mushroom roll', 'missi roti', 'aloo pratha', 'paneer paratha', 'sandwich', 'toaste', 'burger'], isCommon: false },
+      lunch: { label: 'Lunch', items: ['pao bhaji', 'idli sambhar', 'kadi chawal', 'rajma chawal', 'chole chawal', 'roti sabji', 'dal chawal', 'khichdi', 'idli sambhar', 'khichdi'], isCommon: false },
+      dinner: { label: 'Dinner', items: ['salad + veggies', 'soup', 'sprouts'], isCommon: false },
+      mid_snack: { label: 'Mid Snack', items: ['makhana', 'channa', 'seeds', 'ragi laddu'], isCommon: false },
+      snack: { label: 'Snack', items: ['makhana', 'channa', 'seeds', 'ragi laddu'], isCommon: false },
+      drink: { label: 'Drink', items: ['sattu', 'nimbu pani', 'gond katira', 'mango shake', 'banana shake', 'kanji', 'panna'], isCommon: false },
+      milk: { label: 'Milk', items: ['milk', 'dahi', 'chaach'], isCommon: false },
+      protein: { label: 'Protein', items: ['egg', 'paneer', 'sprouts', 'dal', 'soya'], isCommon: false },
+      carbs: { label: 'Carbs', items: ['roti', 'rice', 'bread', 'oats', 'pasta', 'potato', 'wheat'], isCommon: false },
+      veggies: { label: 'Veggies', items: ['beetroot', 'cucumber', 'carrot', 'spinach', 'tomato', 'capsicum', 'broccoli'], isCommon: false },
+      fruits: { label: 'Fruits', items: ['apple', 'melon', 'mango', 'watermelon', 'papaya', 'banana', 'pear', 'plum', 'guava', 'orange', 'jamun', 'cherry', 'litchi', 'pome'], isCommon: false },
+      fats: { label: 'Fats', items: ['ghee', 'oil', 'butter', 'nuts', 'seeds', 'coconut'], isCommon: false },
+      dairy: { label: 'Dairy', items: ['milk', 'dahi', 'chaach', 'paneer', 'yogurt'], isCommon: false },
+    };
+
+    const getMonthDays = (date = new Date()) => {
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      return new Date(year, month + 1, 0).getDate();
+    };
+
+    const shuffleArray = (array) => {
+      const arr = [...array];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+
+    const getVaanaTiffinCategory = (dayOfMonth) => {
+      const date = new Date(2026, 6, dayOfMonth);
+      const dayOfWeek = date.getDay();
+      const categories = ['green_vegetable', 'paranthas', 'fav', 'fermented', 'rice'];
+
+      if (dayOfWeek === 6) return 'fried';
+      if (dayOfWeek === 0) return 'junks';
+      return categories[(dayOfWeek - 1) % 5];
+    };
+
+    const getRandomItemFromSubcategory = (subcategories, categoryKey) => {
+      const items = subcategories[categoryKey]?.items || [];
+      if (items.length === 0) return null;
+      return items[Math.floor(Math.random() * items.length)];
+    };
+
+    const MealPlannerIcon = ({ name, size = 20, className = '' }) => {
+      const icons = {
+        home: '🏠', chart: '📊', breakfast: '🍳', lunch: '🍽️', snack: '🥜', drink: '🥤', milk: '🥛',
+        add: '➕', remove: '❌', shuffle: '🔀', edit: '✏️', list: '📋', trash: '🗑️', check: '✓',
+        calendar: '📅', groceries: '🛒', back: '←',
+      };
+      return <span className={className} style={{ fontSize: `${size}px` }}>{icons[name] || '•'}</span>;
+    };
+
+    const MealPlannerButton = ({ onClick, children, variant = 'primary', size = 'md', className = '' }) => {
+      const baseClass = 'font-medium rounded-lg transition-all active:scale-95';
+      const variants = {
+        primary: 'bg-purple-500 text-white hover:bg-purple-600',
+        secondary: 'bg-gray-200 text-gray-900 hover:bg-gray-300',
+        danger: 'bg-red-500 text-white hover:bg-red-600',
+        outline: 'border-2 border-purple-500 text-purple-600 hover:bg-purple-50',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-base',
+        lg: 'px-6 py-3 text-lg',
+      };
+      return (
+        <button className={`${baseClass} ${variants[variant]} ${sizes[size]} ${className}`} onClick={onClick}>
+          {children}
+        </button>
+      );
+    };
+
+    const MealPlannerCard = ({ children, className = '' }) => (
+      <div className={`bg-white rounded-lg shadow-sm p-4 ${className}`}>{children}</div>
+    );
+
+    const HomeTab = ({ meals, items, setMeals }) => {
+      const monthDays = 31;
+      const today = new Date();
+      const todayDate = today.getDate();
+      const tomorrowDate = new Date(today);
+      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowNum = tomorrowDate.getDate();
+
+      useEffect(() => {
+        if (Object.keys(meals).length === 0 && Object.keys(items).length > 0) {
+          const newMeals = {};
+          for (let day = 1; day <= monthDays; day++) {
+            newMeals[day] = {};
+            Object.keys(items).forEach(category => {
+              if (category === 'vaana_tiffin' && items[category]?.subcategories) {
+                const categoryKey = getVaanaTiffinCategory(day);
+                const item = getRandomItemFromSubcategory(items[category].subcategories, categoryKey);
+                if (item) {
+                  newMeals[day][category] = item;
+                }
+              } else {
+                const itemsList = items[category]?.items || [];
+                if (itemsList.length > 0) {
+                  let itemIndex;
+                  if (itemsList.length > monthDays) {
+                    itemIndex = day - 1;
+                  } else {
+                    itemIndex = (day - 1) % itemsList.length;
+                  }
+                  newMeals[day][category] = itemsList[itemIndex];
+                }
+              }
+            });
+          }
+          setMeals(newMeals);
+        }
+      }, [items]);
+
+      useEffect(() => {
+        setTimeout(() => {
+          const tomorrowElements = Array.from(document.querySelectorAll('[data-day]')).filter(
+            el => parseInt(el.getAttribute('data-day')) === tomorrowNum
+          );
+          if (tomorrowElements.length > 0) {
+            tomorrowElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            tomorrowElements[0].style.animation = 'pulse 2s ease-in-out 3';
+          }
+        }, 500);
+      }, [tomorrowNum]);
+
+      const mealDays = useMemo(() => {
+        const days = [];
+        for (let day = 1; day <= monthDays; day++) {
+          const dayMeals = meals[day] || {};
+          const dateObj = new Date(2026, 6, day);
+          const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+
+          let dateStatus = 'future';
+          if (day < todayDate) {
+            dateStatus = 'past';
+          } else if (day === todayDate) {
+            dateStatus = 'today';
+          } else if (day === tomorrowNum) {
+            dateStatus = 'tomorrow';
+          }
+
+          days.push({
+            day,
+            dayName,
+            meals: dayMeals,
+            mealCount: Object.keys(dayMeals).length,
+            dateStatus
+          });
+        }
+        return days;
+      }, [meals, todayDate, tomorrowNum]);
+
+      const waterItems = items['water']?.items || [];
+
+      return (
+        <div className="pb-4">
+          <MealPlannerCard className="bg-gradient-to-r from-blue-50 to-cyan-50 mb-3 p-3">
+            <h3 className="font-bold text-sm text-blue-900 mb-2">💧 Water & Infusions</h3>
+            <div className="flex flex-wrap gap-2">
+              {waterItems.map((item, idx) => (
+                <span key={idx} className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium">
+                  {item}
+                </span>
+              ))}
+            </div>
+          </MealPlannerCard>
+
+          <MealPlannerCard className="bg-gradient-to-r from-amber-50 to-orange-50 sticky top-0 z-10 p-3 shadow-md mb-3">
+            <div className="flex justify-between items-start">
+              <div><h2 className="text-lg font-bold text-gray-900">📋 Meal Schedule</h2></div>
+              <div className="text-right"><p className="text-xl font-bold text-amber-700">{Object.keys(meals).length}</p><p className="text-xs font-semibold text-amber-600">Days Planned</p></div>
+            </div>
+          </MealPlannerCard>
+
+          {mealDays && mealDays.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {mealDays.filter(day => day.dateStatus === 'today' || day.dateStatus === 'tomorrow').map((dayData) => {
+                let card_bg, card_border, text_color, opacity_class = '';
+
+                if (dayData.dateStatus === 'past') {
+                  card_bg = 'bg-gray-200'; card_border = 'border-gray-400'; text_color = 'text-gray-600'; opacity_class = 'opacity-60';
+                } else if (dayData.dateStatus === 'tomorrow') {
+                  card_bg = 'bg-yellow-100'; card_border = 'border-yellow-500'; text_color = 'text-yellow-800';
+                } else if (dayData.dateStatus === 'today') {
+                  card_bg = 'bg-blue-100'; card_border = 'border-blue-500'; text_color = 'text-blue-800';
+                } else {
+                  card_bg = 'bg-green-50'; card_border = 'border-gray-300'; text_color = 'text-gray-800';
+                }
+
+                let mealEntries = Object.entries(dayData.meals).filter(([cat]) => cat !== 'water' && cat !== 'milk');
+
+                const vFruitIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_fruit');
+                const vTiffinIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_tiffin');
+
+                if (vFruitIndex !== -1 && vTiffinIndex !== -1) {
+                  const [, fruitItem] = mealEntries[vFruitIndex];
+                  const [tiffinCat, tiffinItem] = mealEntries[vTiffinIndex];
+                  mealEntries.splice(vFruitIndex, 1);
+                  const updatedTiffinIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_tiffin');
+                  mealEntries[updatedTiffinIndex] = [tiffinCat, `${fruitItem} + ${tiffinItem}`];
+                }
+
+                const vBreakfastIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_breakfast');
+                const milkFromMeals = dayData.meals['milk'];
+
+                if (vBreakfastIndex !== -1 && milkFromMeals) {
+                  const [bfastCat, bfastItem] = mealEntries[vBreakfastIndex];
+                  mealEntries[vBreakfastIndex] = [bfastCat, `${bfastItem} + ${milkFromMeals}`];
+                }
+
+                const allMeals = mealEntries;
+                const leftMeals = allMeals.slice(0, 4);
+                const rightMeals = allMeals.slice(4, 8);
+
+                const handleShuffleDay = () => {
+                  const newMealsForDay = { ...meals[dayData.day] };
+                  Object.keys(newMealsForDay).forEach(category => {
+                    const itemsList = items[category]?.items || [];
+                    if (itemsList.length > 0) {
+                      const randomIndex = Math.floor(Math.random() * itemsList.length);
+                      newMealsForDay[category] = itemsList[randomIndex];
+                    }
+                  });
+                  setMeals(prev => ({ ...prev, [dayData.day]: newMealsForDay }));
+                };
+
+                const handleShuffleItem = (category) => {
+                  const itemsList = items[category]?.items || [];
+                  if (itemsList.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * itemsList.length);
+                    setMeals(prev => ({
+                      ...prev,
+                      [dayData.day]: { ...prev[dayData.day], [category]: itemsList[randomIndex] }
+                    }));
+                  }
+                };
+
+                return (
+                  <div key={dayData.day} data-day={dayData.day} className={`${card_bg} border-l-4 ${card_border} p-2 rounded-r ${opacity_class} transition-all shadow-sm hover:shadow-md flex flex-col`}>
+                    <div className="mb-2">
+                      <h3 className={`font-bold text-xs ${text_color} line-clamp-2`}>
+                        {dayData.dateStatus === 'tomorrow' && '⭐ '}
+                        {dayData.dateStatus === 'today' && '📍 '}
+                        {dayData.dayName} · {dayData.day}
+                      </h3>
+                    </div>
+                    <div className="flex gap-2 flex-1">
+                      <div className="space-y-1 flex-1">
+                        {leftMeals.map(([cat, item]) => (
+                          <div key={cat} className="bg-white p-1 rounded border border-gray-200 text-xs flex items-center justify-between gap-1">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-gray-700 text-xs truncate">{items[cat]?.label || cat}</p>
+                              <p className="text-gray-900 text-xs truncate">{item}</p>
+                            </div>
+                            <button onClick={() => handleShuffleItem(cat)} className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-600 px-1 py-0.5 rounded flex-shrink-0 font-bold">
+                              🔀
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {rightMeals.length > 0 && (
+                        <div className="space-y-1 flex-1">
+                          {rightMeals.map(([cat, item]) => (
+                            <div key={cat} className="bg-white p-1 rounded border border-gray-200 text-xs flex items-center justify-between gap-1">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-gray-700 text-xs truncate">{items[cat]?.label || cat}</p>
+                                <p className="text-gray-900 text-xs truncate">{item}</p>
+                              </div>
+                              <button onClick={() => handleShuffleItem(cat)} className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-600 px-1 py-0.5 rounded flex-shrink-0 font-bold">
+                                🔀
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">Loading meal plans...</div>
+          )}
+        </div>
+      );
+    };
+
+    const MealTab = ({ mealType, label, meals, items, setMeals, setItems }) => {
+      const itemData = items[mealType];
+      const subcategories = itemData?.subcategories;
+      const itemsList = itemData?.items || [];
+      const daysToShow = Math.min(itemsList.length, getMonthDays());
+      const [newItem, setNewItem] = useState('');
+      const [selectedSubcategory, setSelectedSubcategory] = useState(null);
+
+      const handleAddItem = () => {
+        if (!newItem.trim()) return;
+        if (subcategories && !selectedSubcategory) return;
+
+        if (subcategories) {
+          setItems(prev => ({
+            ...prev,
+            [mealType]: {
+              ...prev[mealType],
+              subcategories: {
+                ...prev[mealType].subcategories,
+                [selectedSubcategory]: {
+                  ...prev[mealType].subcategories[selectedSubcategory],
+                  items: [...(prev[mealType].subcategories[selectedSubcategory]?.items || []), newItem.trim()]
+                }
+              }
+            }
+          }));
+        } else {
+          setItems(prev => ({
+            ...prev,
+            [mealType]: {
+              ...prev[mealType],
+              items: [...(prev[mealType]?.items || []), newItem.trim()]
+            }
+          }));
+        }
+        setNewItem('');
+      };
+
+      const handleRemoveItem = (index) => {
+        setItems(prev => ({
+          ...prev,
+          [mealType]: {
+            ...prev[mealType],
+            items: itemsList.filter((_, i) => i !== index)
+          }
+        }));
+      };
+
+      const handleRemoveSubcategoryItem = (subcatKey, index) => {
+        setItems(prev => ({
+          ...prev,
+          [mealType]: {
+            ...prev[mealType],
+            subcategories: {
+              ...prev[mealType].subcategories,
+              [subcatKey]: {
+                ...prev[mealType].subcategories[subcatKey],
+                items: prev[mealType].subcategories[subcatKey].items.filter((_, i) => i !== index)
+              }
+            }
+          }
+        }));
+      };
+
+      if (subcategories) {
+        const subcatKeys = Object.keys(subcategories);
+        return (
+          <div className="space-y-3 w-full">
+            <MealPlannerCard className="bg-gradient-to-r from-purple-50 to-pink-50">
+              <h2 className="text-lg font-bold text-gray-900 mb-2">{label}</h2>
+              <p className="text-sm text-gray-600 mb-3">7 categories · Mon: Green Veg · Tue: Paranthas · Wed: Fav · Thu: Fermented · Fri: Rice · Sat: Fried · Sun: Junks</p>
+
+              <div className="flex gap-2">
+                <select
+                  value={selectedSubcategory || ''}
+                  onChange={(e) => setSelectedSubcategory(e.target.value)}
+                  className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">Select category to add item</option>
+                  {subcatKeys.map(key => (
+                    <option key={key} value={key}>{subcategories[key].label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-2 mt-3">
+                <input
+                  type="text"
+                  value={newItem}
+                  onChange={(e) => setNewItem(e.target.value)}
+                  placeholder="Add new item..."
+                  className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+                />
+                <MealPlannerButton onClick={handleAddItem} size="sm" variant="primary">
+                  <MealPlannerIcon name="add" size={14} /> Add
+                </MealPlannerButton>
+              </div>
+            </MealPlannerCard>
+
+            <div className="space-y-4 pb-4">
+              {subcatKeys.map(subcatKey => (
+                <div key={subcatKey} className="border border-gray-300 rounded-lg overflow-hidden">
+                  <div className="bg-gradient-to-r from-purple-100 to-pink-100 px-4 py-2">
+                    <h3 className="font-bold text-sm text-gray-900">{subcategories[subcatKey].label}</h3>
+                    <p className="text-xs text-gray-600">{subcategories[subcatKey].items.length} items</p>
+                  </div>
+                  <div className="p-3 space-y-2 bg-white">
+                    {subcategories[subcatKey].items.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No items</p>
+                    ) : (
+                      subcategories[subcatKey].items.map((item, idx) => (
+                        <div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded border border-gray-200">
+                          <span className="text-sm text-gray-700">{item}</span>
+                          <button
+                            onClick={() => handleRemoveSubcategoryItem(subcatKey, idx)}
+                            className="text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded font-bold"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-3 w-full">
+          <MealPlannerCard className="bg-gradient-to-r from-purple-50 to-pink-50">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-gray-900">{label}</h2>
+            </div>
+            <p className="text-sm text-gray-600">{itemsList.length} items available</p>
+
+            <div className="flex gap-2 mt-3">
+              <input
+                type="text"
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                placeholder="Add new item..."
+                className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+              />
+              <MealPlannerButton onClick={handleAddItem} size="sm" variant="primary">
+                <MealPlannerIcon name="add" size={14} /> Add
+              </MealPlannerButton>
+            </div>
+          </MealPlannerCard>
+
+          <div className="space-y-2 pb-4">
+            {itemsList.map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200 shadow-sm">
+                <span className="text-sm text-gray-700">{item}</span>
+                <button
+                  onClick={() => handleRemoveItem(idx)}
+                  className="text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    const ItemsManagerTab = ({ items, setItems }) => {
+      const [selectedCategory, setSelectedCategory] = useState('water');
+      const [newItem, setNewItem] = useState('');
+
+      const handleAddItem = () => {
+        if (!newItem.trim()) return;
+        setItems(prev => ({
+          ...prev,
+          [selectedCategory]: {
+            ...prev[selectedCategory],
+            items: [...(prev[selectedCategory].items || []), newItem.trim()]
+          }
+        }));
+        setNewItem('');
+      };
+
+      const handleRemoveItem = (category, index) => {
+        setItems(prev => ({
+          ...prev,
+          [category]: {
+            ...prev[category],
+            items: prev[category].items.filter((_, i) => i !== index)
+          }
+        }));
+      };
+
+      const currentCategory = items[selectedCategory];
+      const categoryList = Object.entries(items).sort((a, b) => {
+        if (a[1].isCommon) return -1;
+        if (b[1].isCommon) return 1;
+        return 0;
+      });
+
+      return (
+        <div className="space-y-3">
+          <MealPlannerCard className="bg-gradient-to-r from-purple-50 to-pink-50">
+            <h2 className="text-lg font-bold text-gray-900">Manage Food Items</h2>
+            <p className="text-sm text-gray-600">Add or remove items from categories</p>
+          </MealPlannerCard>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-semibold text-gray-700">Category</label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              {categoryList.map(([key, cat]) => (
+                <option key={key} value={key}>
+                  {cat.isCommon ? '⭐ ' : ''}{cat.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <MealPlannerCard>
+            <h3 className="font-semibold text-gray-900 mb-3">{currentCategory?.label}</h3>
+            <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
+              {currentCategory?.items?.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                  <span className="text-sm text-gray-800">{item}</span>
+                  <MealPlannerButton
+                    onClick={() => handleRemoveItem(selectedCategory, idx)}
+                    size="sm"
+                    variant="danger"
+                  >
+                    <MealPlannerIcon name="remove" size={14} />
+                  </MealPlannerButton>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                placeholder="New item name"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+              />
+              <MealPlannerButton onClick={handleAddItem} size="md" variant="primary">
+                <MealPlannerIcon name="add" size={16} /> Add
+              </MealPlannerButton>
+            </div>
+          </MealPlannerCard>
+        </div>
+      );
+    };
+
+    const GroceryTab = ({ grocery, setGrocery }) => {
+      const [newItem, setNewItem] = useState('');
+
+      const handleAddItem = () => {
+        if (!newItem.trim()) return;
+        setGrocery(prev => [...prev, { id: Date.now(), name: newItem.trim(), bought: false }]);
+        setNewItem('');
+      };
+
+      const handleToggleBought = (id) => {
+        setGrocery(prev => prev.map(item => item.id === id ? { ...item, bought: !item.bought } : item));
+      };
+
+      const handleRemoveItem = (id) => {
+        setGrocery(prev => prev.filter(item => item.id !== id));
+      };
+
+      const boughtCount = grocery.filter(item => item.bought).length;
+
+      return (
+        <div className="space-y-3">
+          <MealPlannerCard className="bg-gradient-to-r from-orange-50 to-amber-50">
+            <h2 className="text-lg font-bold text-gray-900">Grocery List</h2>
+            <p className="text-sm text-gray-600">
+              {boughtCount} of {grocery.length} items bought
+            </p>
+          </MealPlannerCard>
+
+          <MealPlannerCard>
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                placeholder="Add grocery item"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+              />
+              <MealPlannerButton onClick={handleAddItem} size="md" variant="primary">
+                <MealPlannerIcon name="add" size={16} />
+              </MealPlannerButton>
+            </div>
+
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {grocery.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">No items in grocery list</p>
+              ) : (
+                grocery.map(item => (
+                  <div key={item.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded hover:bg-gray-100 transition">
+                    <input
+                      type="checkbox"
+                      checked={item.bought}
+                      onChange={() => handleToggleBought(item.id)}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                    <span className={`flex-1 text-sm ${item.bought ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                      {item.name}
+                    </span>
+                    <MealPlannerButton
+                      onClick={() => handleRemoveItem(item.id)}
+                      size="sm"
+                      variant="danger"
+                    >
+                      <MealPlannerIcon name="remove" size={14} />
+                    </MealPlannerButton>
+                  </div>
+                ))
+              )}
+            </div>
+          </MealPlannerCard>
+        </div>
+      );
+    };
+
+    const MealPlannerNavigation = ({ activeTab, setActiveTab }) => {
+      const tabs = [
+        { id: 'home', label: 'Home', icon: 'home' },
+        { id: 'vaana_tiffin', label: 'V. Tiffin', icon: 'breakfast' },
+        { id: 'vaana_breakfast', label: 'V. Bfast', icon: 'breakfast' },
+        { id: 'vaana_fruit', label: 'V. Fruit', icon: 'snack' },
+        { id: 'breakfast', label: 'Breakfast', icon: 'breakfast' },
+        { id: 'mid_snack', label: 'Mid Snack', icon: 'snack' },
+        { id: 'lunch', label: 'Lunch', icon: 'lunch' },
+        { id: 'drink', label: 'Drink', icon: 'drink' },
+        { id: 'snack', label: 'Snack', icon: 'snack' },
+        { id: 'dinner', label: 'Dinner', icon: 'lunch' },
+        { id: 'items', label: 'Items', icon: 'list' },
+        { id: 'grocery', label: 'Grocery', icon: 'groceries' },
+      ].filter(tab => tab.id !== 'water' && tab.id !== 'items');
+
+      return (
+        <div className="overflow-x-auto no-scrollbar pb-safe border-t border-gray-200 bg-white">
+          <div className="flex gap-0 min-w-max">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-2 py-3 text-xs font-semibold transition-colors whitespace-nowrap border-b-2 ${
+                  activeTab === tab.id
+                    ? 'text-purple-600 border-b-2 border-purple-600'
+                    : 'text-gray-600 border-b-2 border-transparent hover:text-gray-900'
+                }`}
+              >
+                <MealPlannerIcon name={tab.icon} size={14} className="mr-0.5" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    function MealPlannerApp({ onBack }) {
+      const [meals, setMeals] = usePersistentState(MEAL_STORAGE.MEALS, {});
+      const [items, setItems] = usePersistentState(MEAL_STORAGE.ITEMS, DEFAULT_ITEMS);
+      const [grocery, setGrocery] = usePersistentState(MEAL_STORAGE.GROCERY, []);
+      const [activeTab, setActiveTab] = useState('home');
+
+      return (
+        <div className="h-screen flex flex-col bg-gray-50">
+          <div className="pt-safe bg-white border-b border-gray-200">
+            <div className="px-4 py-4">
+              <button onClick={onBack} className="text-gray-600 hover:text-gray-900 transition text-sm font-medium mb-2 flex items-center gap-1">
+                ← Back
+              </button>
+              <h1 className="text-2xl font-bold text-gray-900">
+                <MealPlannerIcon name="calendar" size={24} className="mr-2" />
+                Meal Planner
+              </h1>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {activeTab === 'home' && <HomeTab meals={meals} items={items} setMeals={setMeals} />}
+            {activeTab === 'vaana_tiffin' && <MealTab mealType="vaana_tiffin" label="Vaana Tiffin" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'vaana_breakfast' && <MealTab mealType="vaana_breakfast" label="Vaana Breakfast" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'vaana_fruit' && <MealTab mealType="vaana_fruit" label="Vaana Fruit" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'breakfast' && <MealTab mealType="breakfast" label="Breakfast" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'mid_snack' && <MealTab mealType="mid_snack" label="Mid Snack" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'lunch' && <MealTab mealType="lunch" label="Lunch" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'drink' && <MealTab mealType="drink" label="Drink" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'snack' && <MealTab mealType="snack" label="Snack" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'dinner' && <MealTab mealType="dinner" label="Dinner" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'items' && <ItemsManagerTab items={items} setItems={setItems} />}
+            {activeTab === 'grocery' && <GroceryTab grocery={grocery} setGrocery={setGrocery} />}
+          </div>
+
+          <MealPlannerNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
+        </div>
+      );
+    }
+
+    /* ============================================================
+       ROOT APP COMPONENT
+       ============================================================ */
+    function RootApp() {
+      const [currentApp, setCurrentApp] = useState(null);
+
+      if (currentApp === null) {
+        return <LandingPage onSelectApp={setCurrentApp} />;
+      }
+
+      if (currentApp === 'finance') {
+        return <FinanceApp onBack={() => setCurrentApp(null)} />;
+      }
+
+      if (currentApp === 'mealplanner') {
+        return <MealPlannerApp onBack={() => setCurrentApp(null)} />;
+      }
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<RootApp />);
+  </script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch((err) => {
+          console.warn('Service worker registration failed:', err);
+        });
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#8b5cf6" />
+  <title>Meal Planner — Daily Nutrition Tracker</title>
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- iOS home-screen / standalone-app behavior -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Meal Planner" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png" />
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Segoe UI', 'Roboto', 'system-ui', 'sans-serif'],
+          },
+          colors: { ink: '#0f172a' },
+        },
+      },
+    };
+  </script>
+
+  <!-- React + ReactDOM + Recharts -->
+  <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+  <style>
+    html, body, #root { height: 100%; }
+    body {
+      margin: 0;
+      background: #f3f1f8;
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior-y: none;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .pt-safe { padding-top: env(safe-area-inset-top); }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .animate-sheet { animation: sheetUp .28s cubic-bezier(.22,1,.36,1); }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    .animate-fade { animation: fade .2s ease-out; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    input, select, button { font-family: inherit; }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useMemo, useCallback, useRef } = React;
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
+
+    /* ============================================================
+       1. CONSTANTS & DATA
+       ============================================================ */
+    const STORAGE = {
+      MEALS: 'mealplanner.meals.v1',
+      ITEMS: 'mealplanner.items.v1',
+      GROCERY: 'mealplanner.grocery.v1',
+    };
+
+    const MEAL_TIMES = [
+      { id: 'vaana_tiffin', label: 'Vaana Tiffin' },
+      { id: 'vaana_breakfast', label: 'Vaana Breakfast' },
+      { id: 'vaana_fruit', label: 'Vaana Fruit' },
+      { id: 'breakfast', label: 'Breakfast' },
+      { id: 'mid_snack', label: 'Mid Snack' },
+      { id: 'lunch', label: 'Lunch' },
+      { id: 'drink', label: 'Drink' },
+      { id: 'snack', label: 'Snack' },
+      { id: 'dinner', label: 'Dinner' },
+      { id: 'milk', label: 'Milk' },
+    ];
+
+    const NUTRIENT_TYPES = ['protein', 'carbs', 'veggies', 'fruits', 'fats', 'dairy'];
+
+    const DEFAULT_ITEMS = {
+      water: { label: 'Water', items: ['kesar', 'saunf', 'ajwain', 'jeera', 'methi', 'badam', 'anjer', 'manakka', 'akhrot', 'gond', 'chia', 'sabja', 'flex', 'pumpkin', 'sunflower', 'lehsun', 'ghee'], isCommon: true },
+      vaana_breakfast: { label: 'Vaana Breakfast', items: ['pancakes', 'eggs', 'badam', 'makhana', 'channa', 'shakarkandi'], isCommon: false },
+      vaana_fruit: { label: 'Vaana Fruit', items: ['apple', 'papaya', 'pear', 'pome', 'jaamun', 'banana', 'watermelon', 'melon', 'mango', 'cherry'], isCommon: false },
+      vaana_tiffin: {
+        label: 'Vaana Tiffin',
+        isCommon: false,
+        subcategories: {
+          green_vegetable: { label: 'Green Vegetable', items: ['bhindi roti', 'paneer roti', 'moong chilla', 'oats chilla'] },
+          rice: { label: 'Rice', items: ['fried rice', 'kadhi chawal', 'dal chawal', 'rajma chawal', 'sabutdana'] },
+          paranthas: { label: 'Paranthas', items: ['alloo', 'paneer', 'missi', 'moong dal', 'sooji', 'besan', 'omlette', 'vermicilli', 'soya wrap', 'paneer wrap', 'mushroom wrap', 'rajma taco', 'sattu pratha', 'egg wrap', 'thecha'] },
+          fried: { label: 'Fried', items: ['allo poori', 'kackri allo', 'dal kackri', 'chole bhature', 'bread pakora', 'bread roll', 'sunny side up', 'poha'] },
+          fermented: { label: 'Fermented', items: ['idli sambhar', 'veg idli', 'dosa', 'uttapam', 'vada', 'paddu'] },
+          junks: { label: 'Junks', items: ['sandwich', 'burger', 'fries', 'KFC', 'malai toast', 'pizza', 'pasta', 'toasties'] },
+          fav: { label: 'Favorites', items: ['chaap', 'paneer tikka', 'tikki', 'mini pizza', 'kabab', 'pao bhajji', 'upma', 'macroni'] }
+        }
+      },
+      breakfast: { label: 'Breakfast', items: ['thecha', 'besan veggie cheela', 'soya+besan cheela', 'poha', 'vermicilli', 'macroni', 'upma', 'rajma wrap', 'egg wrap', 'fermented food with chutney', 'moong daal chilla', 'sprouts roti', 'omlette', 'mushroom roll', 'missi roti', 'aloo pratha', 'paneer paratha', 'sandwich', 'toaste', 'burger'], isCommon: false },
+      lunch: { label: 'Lunch', items: ['pao bhaji', 'idli sambhar', 'kadi chawal', 'rajma chawal', 'chole chawal', 'roti sabji', 'dal chawal', 'khichdi', 'idli sambhar', 'khichdi'], isCommon: false },
+      dinner: { label: 'Dinner', items: ['salad + veggies', 'soup', 'sprouts'], isCommon: false },
+      mid_snack: { label: 'Mid Snack', items: ['makhana', 'channa', 'seeds', 'ragi laddu'], isCommon: false },
+      snack: { label: 'Snack', items: ['makhana', 'channa', 'seeds', 'ragi laddu'], isCommon: false },
+      drink: { label: 'Drink', items: ['sattu', 'nimbu pani', 'gond katira', 'mango shake', 'banana shake', 'kanji', 'panna'], isCommon: false },
+      milk: { label: 'Milk', items: ['milk', 'dahi', 'chaach'], isCommon: false },
+      protein: { label: 'Protein', items: ['egg', 'paneer', 'sprouts', 'dal', 'soya'], isCommon: false },
+      carbs: { label: 'Carbs', items: ['roti', 'rice', 'bread', 'oats', 'pasta', 'potato', 'wheat'], isCommon: false },
+      veggies: { label: 'Veggies', items: ['beetroot', 'cucumber', 'carrot', 'spinach', 'tomato', 'capsicum', 'broccoli'], isCommon: false },
+      fruits: { label: 'Fruits', items: ['apple', 'melon', 'mango', 'watermelon', 'papaya', 'banana', 'pear', 'plum', 'guava', 'orange', 'jamun', 'cherry', 'litchi', 'pome'], isCommon: false },
+      fats: { label: 'Fats', items: ['ghee', 'oil', 'butter', 'nuts', 'seeds', 'coconut'], isCommon: false },
+      dairy: { label: 'Dairy', items: ['milk', 'dahi', 'chaach', 'paneer', 'yogurt'], isCommon: false },
+    };
+
+    /* ============================================================
+       2. CUSTOM HOOKS
+       ============================================================ */
+    const usePersistentState = (key, initialValue) => {
+      const [state, setState] = useState(() => {
+        try {
+          const item = typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
+          return item ? JSON.parse(item) : initialValue;
+        } catch (error) {
+          console.error(`Error loading ${key}:`, error);
+          return initialValue;
+        }
+      });
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(key, JSON.stringify(state));
+        } catch (error) {
+          console.error(`Error saving ${key}:`, error);
+        }
+      }, [state, key]);
+
+      return [state, setState];
+    };
+
+    /* ============================================================
+       3. UTILITY FUNCTIONS
+       ============================================================ */
+    const getMonthDays = (date = new Date()) => {
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      return new Date(year, month + 1, 0).getDate();
+    };
+
+    const getMonthStart = (date = new Date()) => {
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      return new Date(year, month, 1);
+    };
+
+    const shuffleArray = (array) => {
+      const arr = [...array];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+
+    const getVaanaTiffinCategory = (dayOfMonth) => {
+      const date = new Date(2026, 6, dayOfMonth);
+      const dayOfWeek = date.getDay();
+      const categories = ['green_vegetable', 'paranthas', 'fav', 'fermented', 'rice'];
+
+      if (dayOfWeek === 6) return 'fried'; // Saturday
+      if (dayOfWeek === 0) return 'junks'; // Sunday
+      return categories[(dayOfWeek - 1) % 5]; // Monday (1) - Friday (5)
+    };
+
+    const getRandomItemFromSubcategory = (subcategories, categoryKey) => {
+      const items = subcategories[categoryKey]?.items || [];
+      if (items.length === 0) return null;
+      return items[Math.floor(Math.random() * items.length)];
+    };
+
+    const assignRandomMeals = (mealType, itemsList, monthDays, existingMeals) => {
+      if (!itemsList || itemsList.length === 0) return existingMeals;
+
+      const shuffled = shuffleArray(itemsList);
+      const newMeals = { ...existingMeals };
+
+      for (let day = 1; day <= monthDays; day++) {
+        const itemIndex = itemsList.length > monthDays ? day - 1 : (day - 1) % itemsList.length;
+        if (!newMeals[day]) newMeals[day] = {};
+        newMeals[day][mealType] = shuffled[itemIndex];
+      }
+
+      return newMeals;
+    };
+
+    /* ============================================================
+       4. UI ATOMS
+       ============================================================ */
+    const Icon = ({ name, size = 20, className = '' }) => {
+      const icons = {
+        home: '🏠', chart: '📊', breakfast: '🍳', lunch: '🍽️', snack: '🥜', drink: '🥤', milk: '🥛',
+        add: '➕', remove: '❌', shuffle: '🔀', edit: '✏️', list: '📋', trash: '🗑️', check: '✓',
+        calendar: '📅', groceries: '🛒', back: '←',
+      };
+      return <span className={className} style={{ fontSize: `${size}px` }}>{icons[name] || '•'}</span>;
+    };
+
+    const Button = ({ onClick, children, variant = 'primary', size = 'md', className = '' }) => {
+      const baseClass = 'font-medium rounded-lg transition-all active:scale-95';
+      const variants = {
+        primary: 'bg-purple-500 text-white hover:bg-purple-600',
+        secondary: 'bg-gray-200 text-gray-900 hover:bg-gray-300',
+        danger: 'bg-red-500 text-white hover:bg-red-600',
+        outline: 'border-2 border-purple-500 text-purple-600 hover:bg-purple-50',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-base',
+        lg: 'px-6 py-3 text-lg',
+      };
+      return (
+        <button className={`${baseClass} ${variants[variant]} ${sizes[size]} ${className}`} onClick={onClick}>
+          {children}
+        </button>
+      );
+    };
+
+    const Card = ({ children, className = '' }) => (
+      <div className={`bg-white rounded-lg shadow-sm p-4 ${className}`}>{children}</div>
+    );
+
+    /* ============================================================
+       5. COMPONENTS
+       ============================================================ */
+    const HomeTab = ({ meals, items, setMeals }) => {
+      const monthDays = 31; // July has 31 days
+      const today = new Date();
+      const todayDate = today.getDate();
+      const tomorrowDate = new Date(today);
+      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowNum = tomorrowDate.getDate();
+
+      useEffect(() => {
+        // Auto-populate meals if not already done
+        if (Object.keys(meals).length === 0 && Object.keys(items).length > 0) {
+          const newMeals = {};
+          for (let day = 1; day <= monthDays; day++) {
+            newMeals[day] = {};
+            // Assign meals for each category
+            Object.keys(items).forEach(category => {
+              if (category === 'vaana_tiffin' && items[category]?.subcategories) {
+                // Special handling for V. Tiffin with rotation
+                const categoryKey = getVaanaTiffinCategory(day);
+                const item = getRandomItemFromSubcategory(items[category].subcategories, categoryKey);
+                if (item) {
+                  newMeals[day][category] = item;
+                }
+              } else {
+                const itemsList = items[category]?.items || [];
+                if (itemsList.length > 0) {
+                  // Don't repeat if enough items for the month
+                  let itemIndex;
+                  if (itemsList.length > monthDays) {
+                    itemIndex = day - 1;
+                  } else {
+                    itemIndex = (day - 1) % itemsList.length;
+                  }
+                  newMeals[day][category] = itemsList[itemIndex];
+                }
+              }
+            });
+          }
+          setMeals(newMeals);
+        }
+      }, [items]);
+
+      useEffect(() => {
+        // Auto-scroll to tomorrow's card on load
+        setTimeout(() => {
+          const tomorrowElements = Array.from(document.querySelectorAll('[data-day]')).filter(
+            el => parseInt(el.getAttribute('data-day')) === tomorrowNum
+          );
+          if (tomorrowElements.length > 0) {
+            tomorrowElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Add highlight animation
+            tomorrowElements[0].style.animation = 'pulse 2s ease-in-out 3';
+          }
+        }, 500);
+      }, [tomorrowNum]);
+
+      const mealDays = useMemo(() => {
+        const days = [];
+        for (let day = 1; day <= monthDays; day++) {
+          const dayMeals = meals[day] || {};
+          const dateObj = new Date(2026, 6, day);
+          const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+
+          let dateStatus = 'future';
+          if (day < todayDate) {
+            dateStatus = 'past';
+          } else if (day === todayDate) {
+            dateStatus = 'today';
+          } else if (day === tomorrowNum) {
+            dateStatus = 'tomorrow';
+          }
+
+          days.push({
+            day,
+            dayName,
+            meals: dayMeals,
+            mealCount: Object.keys(dayMeals).length,
+            dateStatus
+          });
+        }
+        return days;
+      }, [meals, todayDate, tomorrowNum]);
+
+      const waterItems = items['water']?.items || [];
+
+      return (
+        <div className="pb-4">
+          <Card className="bg-gradient-to-r from-blue-50 to-cyan-50 mb-3 p-3">
+            <h3 className="font-bold text-sm text-blue-900 mb-2">💧 Water & Infusions</h3>
+            <div className="flex flex-wrap gap-2">
+              {waterItems.map((item, idx) => (
+                <span key={idx} className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium">
+                  {item}
+                </span>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="bg-gradient-to-r from-amber-50 to-orange-50 sticky top-0 z-10 p-3 shadow-md mb-3">
+            <div className="flex justify-between items-start">
+              <div><h2 className="text-lg font-bold text-gray-900">📋 Meal Schedule</h2></div>
+              <div className="text-right"><p className="text-xl font-bold text-amber-700">{Object.keys(meals).length}</p><p className="text-xs font-semibold text-amber-600">Days Planned</p></div>
+            </div>
+          </Card>
+
+          {mealDays && mealDays.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {mealDays.filter(day => day.dateStatus === 'today' || day.dateStatus === 'tomorrow').map((dayData) => {
+                let card_bg, card_border, text_color, opacity_class = '';
+
+                if (dayData.dateStatus === 'past') {
+                  card_bg = 'bg-gray-200'; card_border = 'border-gray-400'; text_color = 'text-gray-600'; opacity_class = 'opacity-60';
+                } else if (dayData.dateStatus === 'tomorrow') {
+                  card_bg = 'bg-yellow-100'; card_border = 'border-yellow-500'; text_color = 'text-yellow-800';
+                } else if (dayData.dateStatus === 'today') {
+                  card_bg = 'bg-blue-100'; card_border = 'border-blue-500'; text_color = 'text-blue-800';
+                } else {
+                  card_bg = 'bg-green-50'; card_border = 'border-gray-300'; text_color = 'text-gray-800';
+                }
+
+                // Filter out water and milk, prepare meals
+                let mealEntries = Object.entries(dayData.meals).filter(([cat]) => cat !== 'water' && cat !== 'milk');
+
+                // Combine V.Fruit with V.Tiffin
+                const vFruitIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_fruit');
+                const vTiffinIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_tiffin');
+
+                if (vFruitIndex !== -1 && vTiffinIndex !== -1) {
+                  const [, fruitItem] = mealEntries[vFruitIndex];
+                  const [tiffinCat, tiffinItem] = mealEntries[vTiffinIndex];
+                  // Remove vaana_fruit entry
+                  mealEntries.splice(vFruitIndex, 1);
+                  // Update vaana_tiffin to include both
+                  const updatedTiffinIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_tiffin');
+                  mealEntries[updatedTiffinIndex] = [tiffinCat, `${fruitItem} + ${tiffinItem}`];
+                }
+
+                // Combine Milk with V.Breakfast
+                const vBreakfastIndex = mealEntries.findIndex(([cat]) => cat === 'vaana_breakfast');
+                const milkFromMeals = dayData.meals['milk'];
+
+                if (vBreakfastIndex !== -1 && milkFromMeals) {
+                  const [bfastCat, bfastItem] = mealEntries[vBreakfastIndex];
+                  mealEntries[vBreakfastIndex] = [bfastCat, `${bfastItem} + ${milkFromMeals}`];
+                }
+
+                const allMeals = mealEntries;
+                const leftMeals = allMeals.slice(0, 4);
+                const rightMeals = allMeals.slice(4, 8);
+
+                const handleShuffleDay = () => {
+                  const newMealsForDay = { ...meals[dayData.day] };
+                  Object.keys(newMealsForDay).forEach(category => {
+                    const itemsList = items[category]?.items || [];
+                    if (itemsList.length > 0) {
+                      const randomIndex = Math.floor(Math.random() * itemsList.length);
+                      newMealsForDay[category] = itemsList[randomIndex];
+                    }
+                  });
+                  setMeals(prev => ({ ...prev, [dayData.day]: newMealsForDay }));
+                };
+
+                const handleShuffleItem = (category) => {
+                  const itemsList = items[category]?.items || [];
+                  if (itemsList.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * itemsList.length);
+                    setMeals(prev => ({
+                      ...prev,
+                      [dayData.day]: { ...prev[dayData.day], [category]: itemsList[randomIndex] }
+                    }));
+                  }
+                };
+
+                return (
+                  <div key={dayData.day} data-day={dayData.day} className={`${card_bg} border-l-4 ${card_border} p-2 rounded-r ${opacity_class} transition-all shadow-sm hover:shadow-md flex flex-col`}>
+                    <div className="mb-2">
+                      <h3 className={`font-bold text-xs ${text_color} line-clamp-2`}>
+                        {dayData.dateStatus === 'tomorrow' && '⭐ '}
+                        {dayData.dateStatus === 'today' && '📍 '}
+                        {dayData.dayName} · {dayData.day}
+                      </h3>
+                    </div>
+                    <div className="flex gap-2 flex-1">
+                      <div className="space-y-1 flex-1">
+                        {leftMeals.map(([cat, item]) => (
+                          <div key={cat} className="bg-white p-1 rounded border border-gray-200 text-xs flex items-center justify-between gap-1">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-gray-700 text-xs truncate">{items[cat]?.label || cat}</p>
+                              <p className="text-gray-900 text-xs truncate">{item}</p>
+                            </div>
+                            <button onClick={() => handleShuffleItem(cat)} className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-600 px-1 py-0.5 rounded flex-shrink-0 font-bold">
+                              🔀
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {rightMeals.length > 0 && (
+                        <div className="space-y-1 flex-1">
+                          {rightMeals.map(([cat, item]) => (
+                            <div key={cat} className="bg-white p-1 rounded border border-gray-200 text-xs flex items-center justify-between gap-1">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-gray-700 text-xs truncate">{items[cat]?.label || cat}</p>
+                                <p className="text-gray-900 text-xs truncate">{item}</p>
+                              </div>
+                              <button onClick={() => handleShuffleItem(cat)} className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-600 px-1 py-0.5 rounded flex-shrink-0 font-bold">
+                                🔀
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">Loading meal plans...</div>
+          )}
+        </div>
+      );
+    };
+
+    const MealTab = ({ mealType, label, meals, items, setMeals, setItems }) => {
+      const itemData = items[mealType];
+      const subcategories = itemData?.subcategories;
+      const itemsList = itemData?.items || [];
+      const daysToShow = Math.min(itemsList.length, getMonthDays());
+      const [newItem, setNewItem] = useState('');
+      const [selectedSubcategory, setSelectedSubcategory] = useState(null);
+
+      const handleAddItem = () => {
+        if (!newItem.trim()) return;
+        if (subcategories && !selectedSubcategory) return;
+
+        if (subcategories) {
+          // Adding to a subcategory
+          setItems(prev => ({
+            ...prev,
+            [mealType]: {
+              ...prev[mealType],
+              subcategories: {
+                ...prev[mealType].subcategories,
+                [selectedSubcategory]: {
+                  ...prev[mealType].subcategories[selectedSubcategory],
+                  items: [...(prev[mealType].subcategories[selectedSubcategory]?.items || []), newItem.trim()]
+                }
+              }
+            }
+          }));
+        } else {
+          // Adding to a regular category
+          setItems(prev => ({
+            ...prev,
+            [mealType]: {
+              ...prev[mealType],
+              items: [...(prev[mealType]?.items || []), newItem.trim()]
+            }
+          }));
+        }
+        setNewItem('');
+      };
+
+      const handleRemoveItem = (index) => {
+        setItems(prev => ({
+          ...prev,
+          [mealType]: {
+            ...prev[mealType],
+            items: itemsList.filter((_, i) => i !== index)
+          }
+        }));
+      };
+
+      const handleRemoveSubcategoryItem = (subcatKey, index) => {
+        setItems(prev => ({
+          ...prev,
+          [mealType]: {
+            ...prev[mealType],
+            subcategories: {
+              ...prev[mealType].subcategories,
+              [subcatKey]: {
+                ...prev[mealType].subcategories[subcatKey],
+                items: prev[mealType].subcategories[subcatKey].items.filter((_, i) => i !== index)
+              }
+            }
+          }
+        }));
+      };
+
+      // V. Tiffin with subcategories
+      if (subcategories) {
+        const subcatKeys = Object.keys(subcategories);
+        return (
+          <div className="space-y-3 w-full">
+            <Card className="bg-gradient-to-r from-purple-50 to-pink-50">
+              <h2 className="text-lg font-bold text-gray-900 mb-2">{label}</h2>
+              <p className="text-sm text-gray-600 mb-3">7 categories · Mon: Green Veg · Tue: Paranthas · Wed: Fav · Thu: Fermented · Fri: Rice · Sat: Fried · Sun: Junks</p>
+
+              <div className="flex gap-2">
+                <select
+                  value={selectedSubcategory || ''}
+                  onChange={(e) => setSelectedSubcategory(e.target.value)}
+                  className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">Select category to add item</option>
+                  {subcatKeys.map(key => (
+                    <option key={key} value={key}>{subcategories[key].label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-2 mt-3">
+                <input
+                  type="text"
+                  value={newItem}
+                  onChange={(e) => setNewItem(e.target.value)}
+                  placeholder="Add new item..."
+                  className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+                />
+                <Button onClick={handleAddItem} size="sm" variant="primary">
+                  <Icon name="add" size={14} /> Add
+                </Button>
+              </div>
+            </Card>
+
+            <div className="space-y-4 pb-4">
+              {subcatKeys.map(subcatKey => (
+                <div key={subcatKey} className="border border-gray-300 rounded-lg overflow-hidden">
+                  <div className="bg-gradient-to-r from-purple-100 to-pink-100 px-4 py-2">
+                    <h3 className="font-bold text-sm text-gray-900">{subcategories[subcatKey].label}</h3>
+                    <p className="text-xs text-gray-600">{subcategories[subcatKey].items.length} items</p>
+                  </div>
+                  <div className="p-3 space-y-2 bg-white">
+                    {subcategories[subcatKey].items.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No items</p>
+                    ) : (
+                      subcategories[subcatKey].items.map((item, idx) => (
+                        <div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded border border-gray-200">
+                          <span className="text-sm text-gray-700">{item}</span>
+                          <button
+                            onClick={() => handleRemoveSubcategoryItem(subcatKey, idx)}
+                            className="text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded font-bold"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      // Regular categories
+      return (
+        <div className="space-y-3 w-full">
+          <Card className="bg-gradient-to-r from-purple-50 to-pink-50">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-gray-900">{label}</h2>
+            </div>
+            <p className="text-sm text-gray-600">{itemsList.length} items available</p>
+
+            <div className="flex gap-2 mt-3">
+              <input
+                type="text"
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                placeholder="Add new item..."
+                className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+              />
+              <Button onClick={handleAddItem} size="sm" variant="primary">
+                <Icon name="add" size={14} /> Add
+              </Button>
+            </div>
+          </Card>
+
+          <div className="space-y-2 pb-4">
+            {itemsList.map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200 shadow-sm">
+                <span className="text-sm text-gray-700">{item}</span>
+                <button
+                  onClick={() => handleRemoveItem(idx)}
+                  className="text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    const ItemsManagerTab = ({ items, setItems }) => {
+      const [selectedCategory, setSelectedCategory] = useState('water');
+      const [newItem, setNewItem] = useState('');
+
+      const handleAddItem = () => {
+        if (!newItem.trim()) return;
+        setItems(prev => ({
+          ...prev,
+          [selectedCategory]: {
+            ...prev[selectedCategory],
+            items: [...(prev[selectedCategory].items || []), newItem.trim()]
+          }
+        }));
+        setNewItem('');
+      };
+
+      const handleRemoveItem = (category, index) => {
+        setItems(prev => ({
+          ...prev,
+          [category]: {
+            ...prev[category],
+            items: prev[category].items.filter((_, i) => i !== index)
+          }
+        }));
+      };
+
+      const currentCategory = items[selectedCategory];
+      const categoryList = Object.entries(items).sort((a, b) => {
+        if (a[1].isCommon) return -1;
+        if (b[1].isCommon) return 1;
+        return 0;
+      });
+
+      return (
+        <div className="space-y-3">
+          <Card className="bg-gradient-to-r from-purple-50 to-pink-50">
+            <h2 className="text-lg font-bold text-gray-900">Manage Food Items</h2>
+            <p className="text-sm text-gray-600">Add or remove items from categories</p>
+          </Card>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-semibold text-gray-700">Category</label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              {categoryList.map(([key, cat]) => (
+                <option key={key} value={key}>
+                  {cat.isCommon ? '⭐ ' : ''}{cat.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3">{currentCategory?.label}</h3>
+            <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
+              {currentCategory?.items?.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                  <span className="text-sm text-gray-800">{item}</span>
+                  <Button
+                    onClick={() => handleRemoveItem(selectedCategory, idx)}
+                    size="sm"
+                    variant="danger"
+                  >
+                    <Icon name="remove" size={14} />
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                placeholder="New item name"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+              />
+              <Button onClick={handleAddItem} size="md" variant="primary">
+                <Icon name="add" size={16} /> Add
+              </Button>
+            </div>
+          </Card>
+        </div>
+      );
+    };
+
+    const GroceryTab = ({ grocery, setGrocery }) => {
+      const [newItem, setNewItem] = useState('');
+
+      const handleAddItem = () => {
+        if (!newItem.trim()) return;
+        setGrocery(prev => [...prev, { id: Date.now(), name: newItem.trim(), bought: false }]);
+        setNewItem('');
+      };
+
+      const handleToggleBought = (id) => {
+        setGrocery(prev => prev.map(item => item.id === id ? { ...item, bought: !item.bought } : item));
+      };
+
+      const handleRemoveItem = (id) => {
+        setGrocery(prev => prev.filter(item => item.id !== id));
+      };
+
+      const boughtCount = grocery.filter(item => item.bought).length;
+
+      return (
+        <div className="space-y-3">
+          <Card className="bg-gradient-to-r from-orange-50 to-amber-50">
+            <h2 className="text-lg font-bold text-gray-900">Grocery List</h2>
+            <p className="text-sm text-gray-600">
+              {boughtCount} of {grocery.length} items bought
+            </p>
+          </Card>
+
+          <Card>
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                placeholder="Add grocery item"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+              />
+              <Button onClick={handleAddItem} size="md" variant="primary">
+                <Icon name="add" size={16} />
+              </Button>
+            </div>
+
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {grocery.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">No items in grocery list</p>
+              ) : (
+                grocery.map(item => (
+                  <div key={item.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded hover:bg-gray-100 transition">
+                    <input
+                      type="checkbox"
+                      checked={item.bought}
+                      onChange={() => handleToggleBought(item.id)}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                    <span className={`flex-1 text-sm ${item.bought ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                      {item.name}
+                    </span>
+                    <Button
+                      onClick={() => handleRemoveItem(item.id)}
+                      size="sm"
+                      variant="danger"
+                    >
+                      <Icon name="remove" size={14} />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+        </div>
+      );
+    };
+
+    const Navigation = ({ activeTab, setActiveTab }) => {
+      const tabs = [
+        { id: 'home', label: 'Home', icon: 'home' },
+        { id: 'vaana_tiffin', label: 'V. Tiffin', icon: 'breakfast' },
+        { id: 'vaana_breakfast', label: 'V. Bfast', icon: 'breakfast' },
+        { id: 'vaana_fruit', label: 'V. Fruit', icon: 'snack' },
+        { id: 'breakfast', label: 'Breakfast', icon: 'breakfast' },
+        { id: 'mid_snack', label: 'Mid Snack', icon: 'snack' },
+        { id: 'lunch', label: 'Lunch', icon: 'lunch' },
+        { id: 'drink', label: 'Drink', icon: 'drink' },
+        { id: 'snack', label: 'Snack', icon: 'snack' },
+        { id: 'dinner', label: 'Dinner', icon: 'lunch' },
+        { id: 'items', label: 'Items', icon: 'list' },
+        { id: 'grocery', label: 'Grocery', icon: 'groceries' },
+      ].filter(tab => tab.id !== 'water' && tab.id !== 'items');
+
+      return (
+        <div className="overflow-x-auto no-scrollbar pb-safe border-t border-gray-200 bg-white">
+          <div className="flex gap-0 min-w-max">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-2 py-3 text-xs font-semibold transition-colors whitespace-nowrap border-b-2 ${
+                  activeTab === tab.id
+                    ? 'text-purple-600 border-b-2 border-purple-600'
+                    : 'text-gray-600 border-b-2 border-transparent hover:text-gray-900'
+                }`}
+              >
+                <Icon name={tab.icon} size={14} className="mr-0.5" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       6. MAIN APP
+       ============================================================ */
+    const App = () => {
+      const [meals, setMeals] = usePersistentState(STORAGE.MEALS, {});
+      const [items, setItems] = usePersistentState(STORAGE.ITEMS, DEFAULT_ITEMS);
+      const [grocery, setGrocery] = usePersistentState(STORAGE.GROCERY, []);
+      const [activeTab, setActiveTab] = useState('home');
+
+      return (
+        <div className="h-screen flex flex-col bg-gray-50">
+          {/* Header */}
+          <div className="pt-safe bg-white border-b border-gray-200">
+            <div className="px-4 py-4">
+              <h1 className="text-2xl font-bold text-gray-900">
+                <Icon name="calendar" size={24} className="mr-2" />
+                Meal Planner
+              </h1>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {activeTab === 'home' && <HomeTab meals={meals} items={items} setMeals={setMeals} />}
+            {activeTab === 'vaana_tiffin' && <MealTab mealType="vaana_tiffin" label="Vaana Tiffin" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'vaana_breakfast' && <MealTab mealType="vaana_breakfast" label="Vaana Breakfast" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'vaana_fruit' && <MealTab mealType="vaana_fruit" label="Vaana Fruit" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'breakfast' && <MealTab mealType="breakfast" label="Breakfast" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'mid_snack' && <MealTab mealType="mid_snack" label="Mid Snack" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'lunch' && <MealTab mealType="lunch" label="Lunch" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'drink' && <MealTab mealType="drink" label="Drink" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'snack' && <MealTab mealType="snack" label="Snack" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'dinner' && <MealTab mealType="dinner" label="Dinner" meals={meals} items={items} setMeals={setMeals} setItems={setItems} />}
+            {activeTab === 'items' && <ItemsManagerTab items={items} setItems={setItems} />}
+            {activeTab === 'grocery' && <GroceryTab grocery={grocery} setGrocery={setGrocery} />}
+          </div>
+
+          {/* Navigation */}
+          <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
+        </div>
+      );
+    };
+
+    // Render app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
