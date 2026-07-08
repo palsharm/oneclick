@@ -1,8 +1,10 @@
-const CACHE_NAME = 'psf-shell-v1';
+const CACHE_NAME = 'psf-shell-v2';
 
 const SHELL_ASSETS = [
   './',
   './index.html',
+  './app.html',
+  './meal-planner.html',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
